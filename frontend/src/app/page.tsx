@@ -1,12 +1,11 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
-// API calls with auth token
+// ─── API helpers with auth ───────────────────────────────
 const getToken = () => typeof window !== 'undefined' ? localStorage.getItem('rgs_token') : null;
 const authHeaders = (): Record<string, string> => {
-  const t = getToken();
-  return t ? { Authorization: `Bearer ${t}` } : {};
+  const t = getToken(); return t ? { Authorization: `Bearer ${t}` } : {};
 };
 const api = (path: string, opts?: RequestInit) =>
   fetch(`/api${path}`, { ...opts, headers: { ...authHeaders(), ...opts?.headers } });
@@ -33,616 +32,209 @@ interface Lead {
   user_notes: string; user_status: string; user_rating: number;
   outreach_status: string;
 }
-
 interface Stats { total: number; scored: number; tiers: Record<string, number>; avg_coherence: number; }
-interface ChatMsg { role: 'user' | 'assistant'; content: string; }
+interface ChatMsg { role: 'user' | 'assistant'; content: string; written?: boolean; }
 
-// ─── Constants ───────────────────────────────────────────
-const T: Record<string, string> = {
-  hot: '#ef4444', warm: '#f59e0b', cold: '#3b82f6',
-  disqualified: '#52525b', unscored: '#71717a',
-};
-const D: Record<string, string> = { Ψ: '#a78bfa', ρ: '#22d3ee', q: '#fbbf24', f: '#34d399' };
-
-// ─── Micro Components ────────────────────────────────────
+const TC: Record<string, string> = { hot:'#ef4444', warm:'#f59e0b', cold:'#3b82f6', disqualified:'#52525b', unscored:'#71717a' };
+const DC = { psi:'#a78bfa', rho:'#22d3ee', q:'#fbbf24', f:'#34d399' };
 const mono: React.CSSProperties = { fontFamily: "'JetBrains Mono', monospace" };
 
-function Bar({ label, val, color }: { label: string; val: number; color: string }) {
-  const v = val ?? 0;
+// ─── Context line generators ─────────────────────────────
+function dimContext(dim: string, val: number, lead: Lead): string {
+  if (dim === 'psi') { return val >= 0.6 ? 'Active buying signals' : val >= 0.3 ? 'Moderate need signals' : 'No buying motion detected'; }
+  if (dim === 'rho') { const t = (lead.title||'').toLowerCase(); if (t.match(/owner|ceo|founder|president/)) return 'Owner — full buying power'; if (t.match(/chief|cmo|cto/)) return 'C-suite — strong authority'; if (t.match(/vp|vice/)) return 'VP — can influence decisions'; if (val < 0.4) return 'May lack budget power'; return 'Decision authority detected'; }
+  if (dim === 'q') { return val >= 0.5 ? 'Strong urgency signals' : val >= 0.2 ? 'Moderate time pressure' : 'No time pressure'; }
+  if (dim === 'f') { const ind = (lead.company_industry||'').toLowerCase(); if (ind.match(/mental|behavioral|recovery|addiction/)) return 'Recovery vertical — perfect ICP'; if (ind.match(/health|hospital/)) return 'Healthcare — good fit'; return 'Moderate ICP alignment'; }
+  return '';
+}
+
+// ─── Radar Chart SVG ─────────────────────────────────────
+function Radar({ psi, rho, q, f, size=100, stroke='#8b5cf6' }: { psi:number; rho:number; q:number; f:number; size?:number; stroke?:string }) {
+  const cx=60, cy=60, R=48;
+  const pt = (a:number, v:number) => { const rad=(a-90)*Math.PI/180; const d=R*Math.max(0.05,v); return [cx+d*Math.cos(rad), cy+d*Math.sin(rad)]; };
+  const top=pt(0,psi), right=pt(90,rho), bot=pt(180,q), left=pt(270,f);
+  const grid = (s:number) => [pt(0,s),pt(90,s),pt(180,s),pt(270,s)].map(p=>p.join(',')).join(' ');
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-      <span style={{ ...mono, width: 16, fontSize: 12, color: '#94a3b8' }}>{label}</span>
-      <div style={{ flex: 1, height: 5, background: '#1e293b', borderRadius: 3, overflow: 'hidden' }}>
-        <div style={{ width: `${Math.min(100, v * 100)}%`, height: '100%', background: color, borderRadius: 3, transition: 'width 0.3s' }} />
+    <svg width={size} height={size} viewBox="0 0 120 120" style={{flexShrink:0}}>
+      <polygon points={grid(1)} fill="none" stroke="#1e293b" strokeWidth="1"/>
+      <polygon points={grid(0.66)} fill="none" stroke="#1e293b" strokeWidth="0.5"/>
+      <polygon points={grid(0.33)} fill="none" stroke="#1e293b" strokeWidth="0.3"/>
+      <line x1={cx} y1={cy-R} x2={cx} y2={cy+R} stroke="#1e293b" strokeWidth="0.3"/>
+      <line x1={cx-R} y1={cy} x2={cx+R} y2={cy} stroke="#1e293b" strokeWidth="0.3"/>
+      <polygon points={`${top.join(',')},${right.join(',')},${bot.join(',')},${left.join(',')}`} fill={`${stroke}18`} stroke={stroke} strokeWidth="1.5"/>
+      <circle cx={top[0]} cy={top[1]} r="3" fill={DC.psi}/><circle cx={right[0]} cy={right[1]} r="3" fill={DC.rho}/>
+      <circle cx={bot[0]} cy={bot[1]} r="3" fill={DC.q}/><circle cx={left[0]} cy={left[1]} r="3" fill={DC.f}/>
+      <text x={cx} y="9" textAnchor="middle" fontSize="9" fill={DC.psi} fontFamily="JetBrains Mono" fontWeight="500">{"Ψ "}{(psi||0).toFixed(2)}</text>
+      <text x="114" y={cy+3} textAnchor="start" fontSize="9" fill={DC.rho} fontFamily="JetBrains Mono" fontWeight="500">{"ρ "}{(rho||0).toFixed(1)}</text>
+      <text x={cx} y="118" textAnchor="middle" fontSize="9" fill={DC.q} fontFamily="JetBrains Mono" fontWeight="500">{"q "}{(q||0).toFixed(2)}</text>
+      <text x="6" y={cx+3} textAnchor="end" fontSize="9" fill={DC.f} fontFamily="JetBrains Mono" fontWeight="500">{"f "}{(f||0).toFixed(1)}</text>
+    </svg>
+  );
+}
+
+// ─── Dimension Row ───────────────────────────────────────
+function DimRow({ sym, label, val, color, context, warn }: { sym:string; label:string; val:number; color:string; context:string; warn?:boolean }) {
+  const v = val ?? 0; const dim = v < 0.2;
+  return (
+    <div style={{display:'flex',alignItems:'center',gap:8,opacity:dim?0.5:1}}>
+      <div style={{width:28,height:28,borderRadius:6,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,flexShrink:0,...mono,background:`${color}15`,color,border:`1px solid ${color}30`}}>{sym}</div>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:10,color:'#64748b',textTransform:'uppercase',letterSpacing:0.5,fontWeight:600}}>{label}</div>
+        <div style={{height:5,background:'#1e293b',borderRadius:3,marginTop:3,overflow:'hidden'}}><div style={{width:`${Math.min(100,v*100)}%`,height:'100%',background:color,borderRadius:3,transition:'width 0.4s'}}/></div>
+        <div style={{fontSize:10,color:warn?'#fbbf24':'#94a3b8',marginTop:2,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{warn?'⚠ ':''}{context}</div>
       </div>
-      <span style={{ ...mono, width: 32, fontSize: 10, color: '#475569', textAlign: 'right' }}>{v ? v.toFixed(2) : '—'}</span>
+      <div style={{...mono,fontSize:10,color:'#475569',flexShrink:0,width:30,textAlign:'right'}}>{v?v.toFixed(2):'—'}</div>
     </div>
   );
 }
 
-function Tier({ t }: { t: string }) {
-  const c = T[t] || '#52525b';
-  return (
-    <span style={{
-      padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 700,
-      textTransform: 'uppercase', letterSpacing: 0.8,
-      background: `${c}18`, color: c, border: `1px solid ${c}33`,
-    }}>{t || '—'}</span>
-  );
-}
-
-function Pill({ label, active, color, onClick }: { label: string; active: boolean; color: string; onClick: () => void }) {
-  return (
-    <button onClick={onClick} style={{
-      padding: '3px 10px', borderRadius: 10, border: `1px solid ${color}44`,
-      background: active ? `${color}20` : 'transparent',
-      color: active ? color : '#64748b', fontSize: 10, cursor: 'pointer',
-      fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, transition: 'all 0.15s',
-    }}>{label}</button>
-  );
-}
+function Tier({t}:{t:string}) { const c=TC[t]||'#52525b'; return <span style={{padding:'3px 12px',borderRadius:10,fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:0.8,background:`${c}18`,color:c,border:`1px solid ${c}33`}}>{t||'—'}</span>; }
 
 // ─── Lead Card ───────────────────────────────────────────
-function Card({ lead, sel, onClick }: { lead: Lead; sel: boolean; onClick: () => void }) {
+function LeadCard({ lead, onFocus }: { lead:Lead; onFocus:(l:Lead)=>void }) {
+  const hasFrac = lead.dimensional_fractures && lead.dimensional_fractures !== 'No fractures detected';
+  const tc = TC[lead.qualification_tier]||'#52525b';
   return (
-    <div onClick={onClick} style={{
-      padding: '12px 14px', borderBottom: '1px solid #141c2b', cursor: 'pointer',
-      background: sel ? '#0c1425' : 'transparent',
-      borderLeft: `3px solid ${sel ? '#8b5cf6' : 'transparent'}`,
-      transition: 'all 0.12s',
-    }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: '#f1f5f9', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {lead.rank_position ? <span style={{ ...mono, color: '#475569', fontSize: 11, marginRight: 6 }}>#{lead.rank_position}</span> : null}
-            {lead.full_name}
+    <div style={{padding:'18px 20px',borderBottom:'1px solid #1e293b'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'start',marginBottom:12}}>
+        <div>
+          <div style={{fontSize:15,fontWeight:600,color:'#f1f5f9'}}>{lead.rank_position?<span style={{...mono,fontSize:11,color:'#475569',marginRight:6}}>#{lead.rank_position}</span>:null}{lead.full_name}</div>
+          <div style={{fontSize:12,color:'#64748b',marginTop:3}}>{lead.title} · {lead.company}{lead.region?` · ${lead.locality?lead.locality+', ':''}${lead.region}`:''}</div>
+        </div>
+        <Tier t={lead.qualification_tier}/>
+      </div>
+      <div style={{display:'flex',gap:20,alignItems:'start'}}>
+        <Radar psi={lead.psi_intent} rho={lead.rho_authority} q={lead.q_optimized} f={lead.f_fit} size={100} stroke={tc}/>
+        <div style={{flex:1}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px 20px'}}>
+            <DimRow sym="Ψ" label="Intent" val={lead.psi_intent} color={DC.psi} context={dimContext('psi',lead.psi_intent,lead)}/>
+            <DimRow sym="ρ" label="Authority" val={lead.rho_authority} color={DC.rho} context={dimContext('rho',lead.rho_authority,lead)} warn={lead.rho_authority>0&&lead.rho_authority<0.4}/>
+            <DimRow sym="q" label="Urgency" val={lead.q_optimized} color={DC.q} context={dimContext('q',lead.q_optimized,lead)}/>
+            <DimRow sym="f" label="Fit" val={lead.f_fit} color={DC.f} context={dimContext('f',lead.f_fit,lead)}/>
           </div>
-          <div style={{ fontSize: 11, color: '#64748b', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {lead.title} · {lead.company}
-          </div>
-        </div>
-        <div style={{ marginLeft: 8, flexShrink: 0 }}><Tier t={lead.qualification_tier} /></div>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px', marginTop: 8 }}>
-        <Bar label="Ψ" val={lead.psi_intent} color={D.Ψ} />
-        <Bar label="ρ" val={lead.rho_authority} color={D.ρ} />
-        <Bar label="q" val={lead.q_optimized} color={D.q} />
-        <Bar label="f" val={lead.f_fit} color={D.f} />
-      </div>
-    </div>
-  );
-}
-
-// ─── Lead Detail Slide-out ───────────────────────────────
-function Detail({ lead, onClose }: { lead: Lead | null; onClose: () => void }) {
-  if (!lead) return null;
-  const hasFracture = lead.dimensional_fractures && lead.dimensional_fractures !== 'No fractures detected';
-  const hasSignals = lead.buying_signals && !lead.buying_signals.startsWith('Scout error');
-
-  return (
-    <div style={{
-      position: 'fixed', right: 0, top: 0, bottom: 0, width: 400,
-      background: '#0a0f1a', borderLeft: '1px solid #1e293b',
-      overflowY: 'auto', zIndex: 200, padding: '20px 20px 40px',
-      boxShadow: '-8px 0 32px rgba(0,0,0,0.4)',
-    }}>
-      <button onClick={onClose} style={{
-        position: 'absolute', top: 14, right: 14, background: '#1e293b',
-        border: 'none', color: '#94a3b8', width: 28, height: 28, borderRadius: 6,
-        cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>✕</button>
-
-      <div style={{ marginBottom: 16 }}>
-        <h2 style={{ margin: 0, fontSize: 18, color: '#f1f5f9', fontWeight: 700 }}>{lead.full_name}</h2>
-        <p style={{ color: '#94a3b8', fontSize: 12, margin: '4px 0 0' }}>{lead.title} at {lead.company}</p>
-      </div>
-
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 18 }}>
-        <Tier t={lead.qualification_tier} />
-        <span style={{ ...mono, fontSize: 11, color: '#475569' }}>
-          C={lead.coherence_score?.toFixed(2)} · #{lead.rank_position}
-        </span>
-      </div>
-
-      {/* Dimensions */}
-      <Section label="Dimensions">
-        <Bar label="Ψ" val={lead.psi_intent} color={D.Ψ} />
-        <Bar label="ρ" val={lead.rho_authority} color={D.ρ} />
-        <Bar label="q" val={lead.q_optimized} color={D.q} />
-        <Bar label="f" val={lead.f_fit} color={D.f} />
-      </Section>
-
-      {/* Fractures */}
-      {hasFracture && (
-        <div style={{
-          background: '#16122a', border: '1px solid #7c3aed30', borderRadius: 8,
-          padding: 10, marginBottom: 14, fontSize: 11, color: '#c4b5fd', lineHeight: 1.5,
-        }}>
-          <span style={{ fontWeight: 700, marginRight: 4 }}>⚡</span>{lead.dimensional_fractures}
-        </div>
-      )}
-
-      {/* Buying Signals */}
-      {hasSignals && (
-        <Section label="Buying Signals">
-          <div style={{
-            fontSize: 12, color: '#cbd5e1', lineHeight: 1.6, background: '#111827',
-            borderRadius: 6, padding: 10, maxHeight: 180, overflowY: 'auto',
-            whiteSpace: 'pre-wrap', border: '1px solid #1e293b',
-          }}>{lead.buying_signals}</div>
-        </Section>
-      )}
-
-      {/* Contact */}
-      <Section label="Contact">
-        <Grid>
-          <GV label="Email" val={lead.email} />
-          <GV label="Phone" val={lead.phone_number1 || lead.mobile_phone1} />
-          <GV label="Region" val={[lead.locality, lead.region].filter(Boolean).join(', ')} />
-          <GV label="Industry" val={lead.company_industry} />
-          <GV label="Size" val={lead.company_size_range} />
-          <GV label="Revenue" val={lead.company_revenue} />
-          <GV label="Founded" val={lead.company_founded?.toString()} />
-          <GV label="Domain" val={lead.company_domain} link={lead.company_domain ? `https://${lead.company_domain}` : undefined} />
-        </Grid>
-      </Section>
-
-      {(lead.linkedin || lead.linkedin_profile_url) && (
-        <a href={lead.linkedin || lead.linkedin_profile_url} target="_blank" rel="noopener noreferrer"
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 4,
-            color: '#8b5cf6', fontSize: 12, textDecoration: 'none',
-            padding: '6px 12px', background: '#8b5cf610', borderRadius: 6, border: '1px solid #8b5cf622',
-          }}>LinkedIn →</a>
-      )}
-    </div>
-  );
-}
-
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 10, color: '#475569', textTransform: 'uppercase', letterSpacing: 1.5, fontWeight: 600, marginBottom: 6 }}>{label}</div>
-      {children}
-    </div>
-  );
-}
-function Grid({ children }: { children: React.ReactNode }) {
-  return <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px' }}>{children}</div>;
-}
-function GV({ label, val, link }: { label: string; val?: string | null; link?: string }) {
-  const text = val || '—';
-  return (
-    <div style={{ fontSize: 11 }}>
-      <span style={{ color: '#475569' }}>{label}: </span>
-      {link ? <a href={link} target="_blank" rel="noopener noreferrer" style={{ color: '#94a3b8', textDecoration: 'none' }}>{text}</a> : <span style={{ color: '#94a3b8' }}>{text}</span>}
-    </div>
-  );
-}
-
-// ─── Stats Bar ───────────────────────────────────────────
-function StatsBar({ stats }: { stats: Stats | null }) {
-  if (!stats) return null;
-  return (
-    <div style={{
-      display: 'flex', gap: 14, padding: '8px 20px', borderBottom: '1px solid #111827',
-      fontSize: 11, color: '#475569', alignItems: 'center', background: '#060a14',
-    }}>
-      <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{stats.total}</span>
-      {Object.entries(stats.tiers || {}).sort((a, b) => b[1] - a[1]).map(([tier, n]) => (
-        <span key={tier} style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-          <span style={{ width: 6, height: 6, borderRadius: 3, background: T[tier] || '#52525b' }} />{n} {tier}
-        </span>
-      ))}
-      {stats.avg_coherence > 0 && <span style={{ marginLeft: 'auto', ...mono, fontSize: 10 }}>C̄={stats.avg_coherence.toFixed(2)}</span>}
-    </div>
-  );
-}
-
-// ─── CSV Drop Zone ───────────────────────────────────
-function CsvDropZone({ onUploaded }: { onUploaded: (msg: string) => void }) {
-  const [dragging, setDragging] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  const handleFile = async (file: File) => {
-    if (!/\.(csv|xlsx|xls|numbers)$/i.test(file.name)) {
-      onUploaded('Accepted formats: CSV, XLSX, or Numbers.');
-      return;
-    }
-    setUploading(true);
-    try {
-      const r = await apiUpload('/upload-csv', file);
-      const d = await r.json();
-      if (r.ok) {
-        onUploaded(`Imported ${d.inserted} leads from ${d.filename}. Run "Rank All" to score them.`);
-      } else {
-        onUploaded(`Import failed: ${d.detail || 'Unknown error'}`);
-      }
-    } catch { onUploaded('Upload failed — check connection.'); }
-    setUploading(false);
-  };
-
-  const onDrop = (e: React.DragEvent) => { e.preventDefault(); setDragging(false); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); };
-  const onDragOver = (e: React.DragEvent) => { e.preventDefault(); setDragging(true); };
-
-  return (
-    <div
-      onDrop={onDrop} onDragOver={onDragOver} onDragLeave={() => setDragging(false)}
-      onClick={() => fileRef.current?.click()}
-      style={{
-        margin: '12px 20px', padding: '18px', borderRadius: 10,
-        border: `2px dashed ${dragging ? '#8b5cf6' : '#1e293b'}`,
-        background: dragging ? '#8b5cf608' : '#0a0f1a',
-        cursor: 'pointer', textAlign: 'center', transition: 'all 0.2s',
-      }}>
-      <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.numbers" hidden onChange={e => { if (e.target.files?.[0]) handleFile(e.target.files[0]); e.target.value = ''; }} />
-      {uploading
-        ? <span style={{ color: '#8b5cf6', fontSize: 13 }}>Uploading...</span>
-        : <span style={{ color: '#64748b', fontSize: 13 }}>Drop a Wiza file here (CSV, XLSX, Numbers) or <span style={{ color: '#8b5cf6', textDecoration: 'underline' }}>click to browse</span></span>
-      }
-    </div>
-  );
-}
-
-// ─── Login Screen ────────────────────────────────────
-function LoginScreen({ onLogin }: { onLogin: (user: any) => void }) {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [displayName, setDisplayName] = useState('');
-  const [companyName, setCompanyName] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const submit = async () => {
-    setError(''); setLoading(true);
-    try {
-      const endpoint = mode === 'login' ? '/auth/login' : '/auth/register';
-      const body = mode === 'login'
-        ? { username, password }
-        : { username, password, display_name: displayName, company_name: companyName };
-      const r = await fetch(`/api${endpoint}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const d = await r.json();
-      if (!r.ok) { setError(d.detail || 'Failed'); setLoading(false); return; }
-      localStorage.setItem('rgs_token', d.token);
-      onLogin(d.user || { username });
-    } catch { setError('Connection error'); }
-    setLoading(false);
-  };
-
-  return (
-    <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#020617', fontFamily: "'DM Sans', sans-serif" }}>
-      <div style={{ width: 360, padding: 32, background: '#0a0f1a', borderRadius: 16, border: '1px solid #1e293b' }}>
-        <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <div style={{ width: 48, height: 48, borderRadius: 12, background: 'linear-gradient(135deg, #7c3aed, #ec4899)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontWeight: 800, color: '#fff', marginBottom: 12 }}>◈</div>
-          <h1 style={{ margin: 0, fontSize: 20, color: '#f1f5f9', fontWeight: 700 }}>Rose Glass Sales</h1>
-          <p style={{ margin: '4px 0 0', fontSize: 11, color: '#475569', letterSpacing: 1.5, textTransform: 'uppercase' }}>CERATA Intelligence</p>
-        </div>
-
-        <div style={{ display: 'flex', gap: 2, background: '#0f172a', borderRadius: 8, padding: 2, marginBottom: 20 }}>
-          {(['login', 'register'] as const).map(m => (
-            <button key={m} onClick={() => setMode(m)} style={{
-              flex: 1, padding: '7px 0', borderRadius: 6, border: 'none', cursor: 'pointer',
-              fontSize: 12, fontWeight: 500, background: mode === m ? '#1e293b' : 'transparent',
-              color: mode === m ? '#f1f5f9' : '#64748b',
-            }}>{m === 'login' ? 'Sign In' : 'Create Account'}</button>
-          ))}
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <input value={username} onChange={e => setUsername(e.target.value)} placeholder="Username"
-            onKeyDown={e => e.key === 'Enter' && submit()}
-            style={inputStyle} />
-          <input value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" type="password"
-            onKeyDown={e => e.key === 'Enter' && submit()}
-            style={inputStyle} />
-          {mode === 'register' && <>
-            <input value={displayName} onChange={e => setDisplayName(e.target.value)} placeholder="Your name" style={inputStyle} />
-            <input value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="Company name" style={inputStyle} />
-          </>}
-          {error && <div style={{ color: '#ef4444', fontSize: 12, padding: '4px 0' }}>{error}</div>}
-          <button onClick={submit} disabled={loading} style={{
-            padding: '10px 0', borderRadius: 8, border: 'none',
-            background: loading ? '#334155' : 'linear-gradient(135deg, #7c3aed, #ec4899)',
-            color: '#fff', fontWeight: 600, cursor: loading ? 'default' : 'pointer', fontSize: 14,
-          }}>{loading ? 'Loading...' : mode === 'login' ? 'Sign In' : 'Create Account'}</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-const inputStyle: React.CSSProperties = {
-  padding: '10px 12px', borderRadius: 8, border: '1px solid #1e293b',
-  background: '#020617', color: '#f1f5f9', fontSize: 13, outline: 'none',
-};
-
-// ─── Settings Panel ──────────────────────────────────────
-function SettingsPanel({ user, onClose, onLogout }: { user: any; onClose: () => void; onLogout: () => void }) {
-  const [displayName, setDisplayName] = useState(user?.display_name || '');
-  const [email, setEmail] = useState(user?.email || '');
-  const [phone, setPhone] = useState(user?.phone || '');
-  const [companyName, setCompanyName] = useState(user?.company_name || '');
-  const [newUsername, setNewUsername] = useState('');
-  const [currentPw, setCurrentPw] = useState('');
-  const [newPw, setNewPw] = useState('');
-  const [msg, setMsg] = useState('');
-
-  const saveProfile = async () => {
-    const r = await api('/auth/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ display_name: displayName, email, phone, company_name: companyName }) });
-    setMsg(r.ok ? 'Profile updated' : 'Failed');
-  };
-
-  const changePw = async () => {
-    if (!currentPw || !newPw) return;
-    const r = await apiJson('/auth/change-password', { current_password: currentPw, new_password: newPw });
-    setMsg(r.ok ? 'Password changed' : 'Failed — check current password');
-    setCurrentPw(''); setNewPw('');
-  };
-
-  const changeUser = async () => {
-    if (!newUsername || !currentPw) return;
-    const r = await apiJson('/auth/change-username', { new_username: newUsername, password: currentPw });
-    setMsg(r.ok ? 'Username changed' : 'Failed');
-    setNewUsername(''); setCurrentPw('');
-  };
-
-  return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}>
-      <div style={{ width: 420, maxHeight: '80vh', overflowY: 'auto', background: '#0a0f1a', borderRadius: 16, border: '1px solid #1e293b', padding: 24 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-          <h2 style={{ margin: 0, fontSize: 18, color: '#f1f5f9' }}>Settings</h2>
-          <button onClick={onClose} style={{ background: '#1e293b', border: 'none', color: '#94a3b8', width: 28, height: 28, borderRadius: 6, cursor: 'pointer', fontSize: 14 }}>✕</button>
-        </div>
-
-        <Section label="Profile">
-          <input value={displayName} onChange={e => setDisplayName(e.target.value)} placeholder="Display name" style={inputStyle} />
-          <input value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" style={{...inputStyle, marginTop: 8}} />
-          <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="Phone" style={{...inputStyle, marginTop: 8}} />
-          <input value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="Company name" style={{...inputStyle, marginTop: 8}} />
-          <button onClick={saveProfile} style={{...btnStyle, marginTop: 10}}>Save Profile</button>
-        </Section>
-
-        <Section label="Change Username">
-          <input value={newUsername} onChange={e => setNewUsername(e.target.value)} placeholder="New username" style={inputStyle} />
-          <input value={currentPw} onChange={e => setCurrentPw(e.target.value)} placeholder="Current password to confirm" type="password" style={{...inputStyle, marginTop: 8}} />
-          <button onClick={changeUser} style={{...btnStyle, marginTop: 10}}>Change Username</button>
-        </Section>
-
-        <Section label="Change Password">
-          <input value={currentPw} onChange={e => setCurrentPw(e.target.value)} placeholder="Current password" type="password" style={inputStyle} />
-          <input value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="New password" type="password" style={{...inputStyle, marginTop: 8}} />
-          <button onClick={changePw} style={{...btnStyle, marginTop: 10}}>Change Password</button>
-        </Section>
-
-        {msg && <div style={{ color: '#8b5cf6', fontSize: 12, padding: '8px 0', textAlign: 'center' }}>{msg}</div>}
-
-        <div style={{ borderTop: '1px solid #1e293b', marginTop: 16, paddingTop: 16 }}>
-          <button onClick={onLogout} style={{ ...btnStyle, background: '#1e293b', color: '#ef4444', border: '1px solid #ef444433' }}>Sign Out</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-const btnStyle: React.CSSProperties = {
-  width: '100%', padding: '8px 0', borderRadius: 8, border: 'none',
-  background: '#7c3aed22', color: '#a78bfa', fontSize: 12, fontWeight: 600, cursor: 'pointer',
-};
-
-// ─── Main ────────────────────────────────────────────────
-export default function Home() {
-  const [authed, setAuthed] = useState(false);
-  const [user, setUser] = useState<any>(null);
-  const [showSettings, setShowSettings] = useState(false);
-  const [view, setView] = useState<'chat' | 'leads'>('chat');
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [sel, setSel] = useState<Lead | null>(null);
-  const [msgs, setMsgs] = useState<ChatMsg[]>([
-    { role: 'assistant', content: 'Rose Glass Sales Intelligence online.\n\n566 leads loaded from the behavioral health vertical — ranked by CERATA dimensional analysis. 192 warm, 346 cold, 28 disqualified. No hot leads yet — scouts haven\'t run to surface urgency signals.\n\nAsk me anything about your pipeline, or hit Scout to start gathering buying signals.' },
-  ]);
-  const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [scouting, setScouting] = useState(false);
-  const [ranking, setRanking] = useState(false);
-  const [scoutingWarm, setScoutingWarm] = useState(false);
-  const [filter, setFilter] = useState<string | null>(null);
-  const endRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const t = localStorage.getItem('rgs_token');
-    if (t) {
-      api('/auth/me').then(r => r.ok ? r.json() : Promise.reject())
-        .then(u => { setUser(u); setAuthed(true); load(); })
-        .catch(() => { localStorage.removeItem('rgs_token'); });
-    }
-    // Check if auth endpoints exist — if not, skip login (backend still deploying)
-    fetch('/api/auth/me').then(r => {
-      if (r.status === 404 || r.status === 405) { setAuthed(true); load(); }
-    }).catch(() => {});
-  }, []);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs]);
-
-  const handleLogin = (u: any) => { setUser(u); setAuthed(true); load(); };
-  const handleLogout = () => { api('/auth/logout', { method: 'POST' }); localStorage.removeItem('rgs_token'); setAuthed(false); setUser(null); };
-
-  const load = () => { api('/stats').then(r => r.json()).then(setStats).catch(() => {}); fetchLeads(); };
-  const fetchLeads = (t?: string | null) => {
-    let url = '/leads?limit=100';
-    if (t) url += `&tier=${t}`;
-    api(url).then(r => r.json()).then(setLeads).catch(() => {});
-  };
-
-  const send = async () => {
-    if (!input.trim() || busy) return;
-    const m = input.trim(); setInput(''); setBusy(true);
-    setMsgs(p => [...p, { role: 'user', content: m }]);
-    try {
-      const r = await apiJson('/chat', { message: m, history: msgs.slice(-10) });
-      const d = await r.json();
-      setMsgs(p => [...p, { role: 'assistant', content: d.reply }]);
-      if (d.stats) setStats(d.stats);
-    } catch { setMsgs(p => [...p, { role: 'assistant', content: 'Connection error.' }]); }
-    setBusy(false);
-  };
-
-  const scout = async () => {
-    setScouting(true);
-    try {
-      const d = await (await apiJson('/scout/run?limit=10', {})).json();
-      setMsgs(p => [...p, { role: 'assistant', content: `Scout complete: ${d.updated} leads updated with buying signals.` }]);
-      load();
-    } catch { setMsgs(p => [...p, { role: 'assistant', content: 'Scout failed — check backend logs.' }]); }
-    setScouting(false);
-  };
-
-  const rank = async () => {
-    setRanking(true);
-    try {
-      const d = await (await apiJson('/rank/run', {})).json();
-      const ts = Object.entries(d.tier_counts || {}).map(([t, c]) => `${c} ${t}`).join(', ');
-      setMsgs(p => [...p, { role: 'assistant', content: `Ranked ${d.ranked} leads: ${ts}` }]);
-      load();
-    } catch { setMsgs(p => [...p, { role: 'assistant', content: 'Ranking failed.' }]); }
-    setRanking(false);
-  };
-
-  const scoutWarm = async () => {
-    setScoutingWarm(true);
-    try {
-      const d = await (await api('/scout/run?tier=warm&limit=50', { method: 'POST' })).json();
-      setMsgs(p => [...p, { role: 'assistant', content: `Scouted ${d.updated} warm leads, auto-ranked ${d.ranked}. ${d.errors ? d.errors + ' errors.' : ''} Check the Leads tab for updated tiers.` }]);
-      load();
-    } catch { setMsgs(p => [...p, { role: 'assistant', content: 'Warm scout run failed.' }]); }
-    setScoutingWarm(false);
-  };
-
-  const toggleFilter = (t: string) => { const next = filter === t ? null : t; setFilter(next); fetchLeads(next); };
-
-  if (!authed) return <LoginScreen onLogin={handleLogin} />;
-
-  return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#020617', color: '#e2e8f0', fontFamily: "'DM Sans', -apple-system, sans-serif" }}>
-      {showSettings && <SettingsPanel user={user} onClose={() => setShowSettings(false)} onLogout={handleLogout} />}
-
-      {/* ── Header ── */}
-      <header style={{ display: 'flex', alignItems: 'center', padding: '10px 20px', borderBottom: '1px solid #111827', background: '#060a14' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{
-            width: 30, height: 30, borderRadius: 7,
-            background: 'linear-gradient(135deg, #7c3aed, #ec4899)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 14, fontWeight: 800, color: '#fff',
-          }}>◈</div>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: '#f1f5f9', letterSpacing: -0.3 }}>Rose Glass Sales</div>
-            <div style={{ fontSize: 9, color: '#475569', letterSpacing: 1.5, textTransform: 'uppercase' }}>CERATA Intelligence</div>
+          <div style={{display:'flex',alignItems:'center',gap:10,marginTop:12,padding:'7px 12px',background:'#111827',borderRadius:8,border:'1px solid #1e293b'}}>
+            <span style={{fontSize:10,color:'#64748b'}}>Coherence</span>
+            <div style={{flex:1,height:6,background:'#1e293b',borderRadius:3,overflow:'hidden'}}><div style={{width:`${Math.min(100,(lead.coherence_score||0)/4*100)}%`,height:'100%',borderRadius:3,background:`linear-gradient(90deg,#7c3aed,${tc})`}}/></div>
+            <span style={{...mono,fontSize:16,fontWeight:700,color:tc}}>{lead.coherence_score?.toFixed(2)||'—'}</span>
           </div>
         </div>
+      </div>
+      {hasFrac&&<div style={{marginTop:10,padding:'10px 14px',background:'#16122a',border:'1px solid #7c3aed30',borderRadius:8,fontSize:11,color:'#c4b5fd',lineHeight:1.5}}><span style={{fontWeight:700}}>⚡ Fracture: </span>{lead.dimensional_fractures}</div>}
+      <button onClick={()=>onFocus(lead)} style={{marginTop:10,padding:'6px 14px',borderRadius:6,border:'1px solid #7c3aed33',background:'#7c3aed10',color:'#a78bfa',fontSize:11,fontWeight:600,cursor:'pointer',display:'inline-flex',alignItems:'center',gap:6}}>◈ Focus — Enter Call Mode</button>
+    </div>
+  );
+}
 
-        <nav style={{ display: 'flex', gap: 2, marginLeft: 28, background: '#0f172a', borderRadius: 8, padding: 2 }}>
-          {(['chat', 'leads'] as const).map(v => (
-            <button key={v} onClick={() => { setView(v); if (v === 'leads') fetchLeads(filter); }}
-              style={{
-                padding: '5px 14px', borderRadius: 6, border: 'none', cursor: 'pointer',
-                fontSize: 12, fontWeight: 500, transition: 'all 0.15s',
-                background: view === v ? '#1e293b' : 'transparent',
-                color: view === v ? '#f1f5f9' : '#64748b',
-              }}>{v.charAt(0).toUpperCase() + v.slice(1)}</button>
-          ))}
-        </nav>
-
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-          <ActionBtn label={scouting ? 'Scouting…' : 'Scout 10'} color="#8b5cf6" disabled={scouting} onClick={scout} />
-          <ActionBtn label={scoutingWarm ? 'Scouting…' : 'Scout Warm'} color="#f59e0b" disabled={scoutingWarm} onClick={scoutWarm} />
-          <ActionBtn label={ranking ? 'Ranking…' : 'Rank All'} color="#06b6d4" disabled={ranking} onClick={rank} />
-          <button onClick={() => setShowSettings(true)} style={{
-            padding: '5px 10px', borderRadius: 6, border: '1px solid #1e293b',
-            background: 'transparent', color: '#64748b', fontSize: 14, cursor: 'pointer',
-          }} title="Settings">⚙</button>
-        </div>
-      </header>
-
-      <StatsBar stats={stats} />
-
-      {/* ── Chat ── */}
-      {view === 'chat' && (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px 0' }}>
-            {msgs.map((m, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start', marginBottom: 10 }}>
-                <div style={{
-                  maxWidth: '72%', padding: '10px 14px', borderRadius: 10, fontSize: 13, lineHeight: 1.6,
-                  whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                  background: m.role === 'user' ? '#7c3aed' : '#111827',
-                  color: m.role === 'user' ? '#fff' : '#e2e8f0',
-                  borderBottomRightRadius: m.role === 'user' ? 2 : 10,
-                  borderBottomLeftRadius: m.role === 'user' ? 10 : 2,
-                }}>{m.content}</div>
+// ─── Call Profile Header ─────────────────────────────────
+function CallProfile({lead}:{lead:Lead}) {
+  const tc = TC[lead.qualification_tier]||'#52525b';
+  return (
+    <div style={{padding:'14px 20px',borderBottom:'1px solid #1e293b',background:'#0a0f1a',flexShrink:0}}>
+      <div style={{display:'flex',gap:16,alignItems:'start'}}>
+        <Radar psi={lead.psi_intent} rho={lead.rho_authority} q={lead.q_optimized} f={lead.f_fit} size={90} stroke={tc}/>
+        <div style={{flex:1}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'start',marginBottom:6}}>
+            <div>
+              <div style={{fontSize:16,fontWeight:700,color:'#f1f5f9'}}>{lead.full_name}</div>
+              <div style={{fontSize:12,color:'#64748b',marginTop:2}}>{lead.title} · {lead.company}</div>
+              <div style={{fontSize:11,color:'#94a3b8',marginTop:3}}>{lead.email||'—'} · {lead.phone_number1||lead.mobile_phone1||'—'}</div>
+            </div>
+            <Tier t={lead.qualification_tier}/>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:8,marginTop:6}}>
+            {[{l:'Intent',v:lead.psi_intent,c:DC.psi},{l:'Authority',v:lead.rho_authority,c:DC.rho},{l:'Urgency',v:lead.q_optimized,c:DC.q},{l:'Fit',v:lead.f_fit,c:DC.f}].map(d=>(
+              <div key={d.l} style={{textAlign:'center',padding:6,background:'#111827',borderRadius:6,border:'1px solid #1e293b'}}>
+                <div style={{fontSize:9,color:'#64748b',textTransform:'uppercase',letterSpacing:0.5}}>{d.l}</div>
+                <div style={{...mono,fontSize:16,fontWeight:700,color:d.c}}>{d.v?`${Math.round(d.v*100)}%`:'—'}</div>
               </div>
             ))}
-            {busy && (
-              <div style={{ display: 'flex', marginBottom: 10 }}>
-                <div style={{ padding: '10px 14px', borderRadius: 10, background: '#111827', fontSize: 13 }}>
-                  <span style={{ color: '#64748b' }}>◈ Analyzing…</span>
-                </div>
-              </div>
-            )}
-            <div ref={endRef} />
-          </div>
-
-          <CsvDropZone onUploaded={(msg) => { setMsgs(p => [...p, { role: 'assistant', content: msg }]); load(); }} />
-          <div style={{ padding: '10px 20px 16px', borderTop: '1px solid #111827' }}>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <input value={input} onChange={e => setInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), send())}
-                placeholder="Ask about leads, run analysis, give feedback…"
-                style={{
-                  flex: 1, padding: '10px 14px', borderRadius: 8, border: '1px solid #1e293b',
-                  background: '#0a0f1a', color: '#f1f5f9', fontSize: 13, outline: 'none',
-                }} />
-              <button onClick={send} disabled={busy} style={{
-                padding: '10px 18px', borderRadius: 8, border: 'none',
-                background: busy ? '#334155' : 'linear-gradient(135deg, #7c3aed, #ec4899)',
-                color: '#fff', fontWeight: 600, cursor: busy ? 'default' : 'pointer', fontSize: 13,
-              }}>Send</button>
-            </div>
           </div>
         </div>
-      )}
-
-      {/* ── Leads ── */}
-      {view === 'leads' && (
-        <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-          <div style={{ flex: 1, overflowY: 'auto' }}>
-            <div style={{ padding: '10px 14px', display: 'flex', gap: 5, borderBottom: '1px solid #111827', flexWrap: 'wrap' }}>
-              {['hot', 'warm', 'cold', 'disqualified'].map(t => (
-                <Pill key={t} label={t} active={filter === t} color={T[t]} onClick={() => toggleFilter(t)} />
-              ))}
-              {filter && <Pill label="clear" active={false} color="#64748b" onClick={() => toggleFilter(filter)} />}
-            </div>
-            {leads.map(l => <Card key={l.id} lead={l} sel={sel?.id === l.id} onClick={() => setSel(l)} />)}
-            {!leads.length && <div style={{ padding: 40, textAlign: 'center', color: '#475569', fontSize: 13 }}>No leads match this filter.</div>}
-          </div>
-          {sel && <Detail lead={sel} onClose={() => setSel(null)} />}
-        </div>
-      )}
+      </div>
     </div>
   );
 }
 
-function ActionBtn({ label, color, disabled, onClick }: { label: string; color: string; disabled: boolean; onClick: () => void }) {
-  return (
-    <button onClick={onClick} disabled={disabled} style={{
-      padding: '5px 12px', borderRadius: 6, border: `1px solid ${color}33`,
-      background: disabled ? '#0f172a' : `${color}10`, color: disabled ? '#475569' : color,
-      fontSize: 11, cursor: disabled ? 'default' : 'pointer', fontWeight: 600, transition: 'all 0.15s',
-    }}>{label}</button>
+// ─── Utility Components ──────────────────────────────────
+function CsvDropZone({onUploaded}:{onUploaded:(m:string)=>void}) {
+  const [drag,setDrag]=useState(false); const [up,setUp]=useState(false); const ref=useRef<HTMLInputElement>(null);
+  const handle=async(f:File)=>{ if(!/\.(csv|xlsx|xls|numbers)$/i.test(f.name)){onUploaded('Accepted: CSV, XLSX, Numbers.');return;} setUp(true); try{const r=await apiUpload('/upload-csv',f);const d=await r.json();onUploaded(r.ok?`Imported ${d.inserted} leads from ${d.filename}.`:`Failed: ${d.detail||'Error'}`);}catch{onUploaded('Upload failed.');} setUp(false); };
+  return(<div onDrop={e=>{e.preventDefault();setDrag(false);if(e.dataTransfer.files[0])handle(e.dataTransfer.files[0]);}} onDragOver={e=>{e.preventDefault();setDrag(true);}} onDragLeave={()=>setDrag(false)} onClick={()=>ref.current?.click()} style={{margin:'10px 20px',padding:14,borderRadius:8,border:`2px dashed ${drag?'#8b5cf6':'#1e293b'}`,background:drag?'#8b5cf608':'#0a0f1a',cursor:'pointer',textAlign:'center'}}><input ref={ref} type="file" accept=".csv,.xlsx,.xls,.numbers" hidden onChange={e=>{if(e.target.files?.[0])handle(e.target.files[0]);e.target.value='';}}/>{up?<span style={{color:'#8b5cf6',fontSize:12}}>Uploading...</span>:<span style={{color:'#64748b',fontSize:12}}>Drop Wiza file or <span style={{color:'#8b5cf6',textDecoration:'underline'}}>browse</span></span>}</div>);
+}
+function ActionBtn({label,color,disabled,onClick}:{label:string;color:string;disabled:boolean;onClick:()=>void}){return<button onClick={onClick} disabled={disabled} style={{padding:'5px 12px',borderRadius:6,border:`1px solid ${color}33`,background:disabled?'#0f172a':`${color}10`,color:disabled?'#475569':color,fontSize:11,cursor:disabled?'default':'pointer',fontWeight:600}}>{label}</button>;}
+function QuickChips({onSend}:{onSend:(m:string)=>void}){return(<div style={{display:'flex',gap:5,marginBottom:6,flexWrap:'wrap'}}>{['Summarize call','Draft follow-up email','Re-rank this lead','What should I ask next?'].map(c=>(<button key={c} onClick={()=>onSend(c)} style={{padding:'3px 10px',borderRadius:12,border:'1px solid #1e293b',background:'transparent',color:'#64748b',fontSize:10,cursor:'pointer'}}>{c}</button>))}</div>);}
+
+function LoginScreen({onLogin}:{onLogin:(u:any)=>void}){const[mode,setMode]=useState<'login'|'register'>('login');const[un,setUn]=useState('');const[pw,setPw]=useState('');const[dn,setDn]=useState('');const[cn,setCn]=useState('');const[err,setErr]=useState('');const[ld,setLd]=useState(false);const sub=async()=>{setErr('');setLd(true);try{const ep=mode==='login'?'/auth/login':'/auth/register';const body=mode==='login'?{username:un,password:pw}:{username:un,password:pw,display_name:dn,company_name:cn};const r=await fetch(`/api${ep}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(!r.ok){setErr(d.detail||'Failed');setLd(false);return;}localStorage.setItem('rgs_token',d.token);onLogin(d.user||{username:un});}catch{setErr('Connection error');}setLd(false);};const inp:React.CSSProperties={padding:'10px 12px',borderRadius:8,border:'1px solid #1e293b',background:'#020617',color:'#f1f5f9',fontSize:13,outline:'none',width:'100%'};return(<div style={{height:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#020617',fontFamily:"'DM Sans',sans-serif"}}><div style={{width:360,padding:32,background:'#0a0f1a',borderRadius:16,border:'1px solid #1e293b'}}><div style={{textAlign:'center',marginBottom:24}}><div style={{width:48,height:48,borderRadius:12,background:'linear-gradient(135deg,#7c3aed,#ec4899)',display:'inline-flex',alignItems:'center',justifyContent:'center',fontSize:22,fontWeight:800,color:'#fff',marginBottom:12}}>◈</div><h1 style={{margin:0,fontSize:20,color:'#f1f5f9',fontWeight:700}}>Rose Glass Sales</h1><p style={{margin:'4px 0 0',fontSize:11,color:'#475569',letterSpacing:1.5,textTransform:'uppercase'}}>CERATA Intelligence</p></div><div style={{display:'flex',gap:2,background:'#0f172a',borderRadius:8,padding:2,marginBottom:20}}>{(['login','register'] as const).map(m=>(<button key={m} onClick={()=>setMode(m)} style={{flex:1,padding:'7px 0',borderRadius:6,border:'none',cursor:'pointer',fontSize:12,fontWeight:500,background:mode===m?'#1e293b':'transparent',color:mode===m?'#f1f5f9':'#64748b'}}>{m==='login'?'Sign In':'Create Account'}</button>))}</div><div style={{display:'flex',flexDirection:'column',gap:10}}><input value={un} onChange={e=>setUn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sub()} placeholder="Username" style={inp}/><input value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sub()} placeholder="Password" type="password" style={inp}/>{mode==='register'&&<><input value={dn} onChange={e=>setDn(e.target.value)} placeholder="Your name" style={inp}/><input value={cn} onChange={e=>setCn(e.target.value)} placeholder="Company name" style={inp}/></>}{err&&<div style={{color:'#ef4444',fontSize:12}}>{err}</div>}<button onClick={sub} disabled={ld} style={{padding:'10px 0',borderRadius:8,border:'none',background:ld?'#334155':'linear-gradient(135deg,#7c3aed,#ec4899)',color:'#fff',fontWeight:600,cursor:ld?'default':'pointer',fontSize:14}}>{ld?'Loading...':mode==='login'?'Sign In':'Create Account'}</button></div></div></div>);}
+
+function SettingsPanel({user,onClose,onLogout}:{user:any;onClose:()=>void;onLogout:()=>void}){const[dn,setDn]=useState(user?.display_name||'');const[em,setEm]=useState(user?.email||'');const[ph,setPh]=useState(user?.phone||'');const[cn,setCn]=useState(user?.company_name||'');const[cp,setCp]=useState('');const[np,setNp]=useState('');const[msg,setMsg]=useState('');const inp:React.CSSProperties={padding:'8px 10px',borderRadius:6,border:'1px solid #1e293b',background:'#020617',color:'#f1f5f9',fontSize:12,outline:'none',width:'100%'};const btn:React.CSSProperties={width:'100%',padding:'7px 0',borderRadius:6,border:'none',background:'#7c3aed22',color:'#a78bfa',fontSize:11,fontWeight:600,cursor:'pointer',marginTop:8};return(<div style={{position:'fixed',inset:0,zIndex:300,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,0.6)'}}><div style={{width:400,maxHeight:'80vh',overflowY:'auto',background:'#0a0f1a',borderRadius:16,border:'1px solid #1e293b',padding:24}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:16}}><h2 style={{margin:0,fontSize:18,color:'#f1f5f9'}}>Settings</h2><button onClick={onClose} style={{background:'#1e293b',border:'none',color:'#94a3b8',width:28,height:28,borderRadius:6,cursor:'pointer'}}>✕</button></div><div style={{fontSize:10,color:'#475569',textTransform:'uppercase',letterSpacing:1.5,fontWeight:600,marginBottom:6}}>Profile</div><div style={{display:'flex',flexDirection:'column',gap:6}}><input value={dn} onChange={e=>setDn(e.target.value)} placeholder="Display name" style={inp}/><input value={em} onChange={e=>setEm(e.target.value)} placeholder="Email" style={inp}/><input value={ph} onChange={e=>setPh(e.target.value)} placeholder="Phone" style={inp}/><input value={cn} onChange={e=>setCn(e.target.value)} placeholder="Company" style={inp}/><button onClick={async()=>{const r=await api('/auth/profile',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({display_name:dn,email:em,phone:ph,company_name:cn})});setMsg(r.ok?'Saved':'Failed');}} style={btn}>Save</button></div><div style={{fontSize:10,color:'#475569',textTransform:'uppercase',letterSpacing:1.5,fontWeight:600,margin:'16px 0 6px'}}>Password</div><div style={{display:'flex',flexDirection:'column',gap:6}}><input value={cp} onChange={e=>setCp(e.target.value)} placeholder="Current password" type="password" style={inp}/><input value={np} onChange={e=>setNp(e.target.value)} placeholder="New password" type="password" style={inp}/><button onClick={async()=>{if(!cp||!np)return;const r=await apiJson('/auth/change-password',{current_password:cp,new_password:np});setMsg(r.ok?'Changed':'Failed');setCp('');setNp('');}} style={btn}>Change Password</button></div>{msg&&<div style={{color:'#8b5cf6',fontSize:12,textAlign:'center',padding:'8px 0'}}>{msg}</div>}<button onClick={onLogout} style={{...btn,background:'#1e293b',color:'#ef4444',border:'1px solid #ef444433',marginTop:16}}>Sign Out</button></div></div>);}
+
+// ═══════════════════════════════════════════════════════════
+// MAIN
+// ═══════════════════════════════════════════════════════════
+export default function Home(){
+  const[authed,setAuthed]=useState(false);const[user,setUser]=useState<any>(null);const[showSettings,setShowSettings]=useState(false);
+  const[view,setView]=useState<'chat'|'leads'>('chat');const[leads,setLeads]=useState<Lead[]>([]);const[stats,setStats]=useState<Stats|null>(null);
+  const[focusLead,setFocusLead]=useState<Lead|null>(null);
+  const[msgs,setMsgs]=useState<ChatMsg[]>([{role:'assistant',content:'Rose Glass Sales Intelligence online. Ask me about your leads, or switch to Leads and hit Focus to enter call mode.'}]);
+  const[focusMsgs,setFocusMsgs]=useState<ChatMsg[]>([]);const[input,setInput]=useState('');
+  const[busy,setBusy]=useState(false);const[scouting,setScouting]=useState(false);const[scoutingWarm,setScoutingWarm]=useState(false);const[ranking,setRanking]=useState(false);const[filter,setFilter]=useState<string|null>(null);
+  const endRef=useRef<HTMLDivElement>(null);const focusEndRef=useRef<HTMLDivElement>(null);
+  useEffect(()=>{const t=localStorage.getItem('rgs_token');if(t){api('/auth/me').then(r=>r.ok?r.json():Promise.reject()).then(u=>{setUser(u);setAuthed(true);load();}).catch(()=>{localStorage.removeItem('rgs_token');});}fetch('/api/auth/me').then(r=>{if(r.status===404||r.status===405){setAuthed(true);load();}}).catch(()=>{});},[]);
+  useEffect(()=>{endRef.current?.scrollIntoView({behavior:'smooth'});},[msgs]);
+  useEffect(()=>{focusEndRef.current?.scrollIntoView({behavior:'smooth'});},[focusMsgs]);
+  const handleLogin=(u:any)=>{setUser(u);setAuthed(true);load();};
+  const handleLogout=()=>{api('/auth/logout',{method:'POST'});localStorage.removeItem('rgs_token');setAuthed(false);setUser(null);};
+  const load=()=>{api('/stats').then(r=>r.json()).then(setStats).catch(()=>{});fetchLeads();};
+  const fetchLeads=(t?:string|null)=>{let url='/leads?limit=100';if(t)url+=`&tier=${t}`;api(url).then(r=>r.json()).then(setLeads).catch(()=>{});};
+  const send=async()=>{if(!input.trim()||busy)return;const m=input.trim();setInput('');setBusy(true);setMsgs(p=>[...p,{role:'user',content:m}]);try{const r=await apiJson('/chat',{message:m,history:msgs.slice(-10)});const d=await r.json();setMsgs(p=>[...p,{role:'assistant',content:d.reply}]);if(d.stats)setStats(d.stats);}catch{setMsgs(p=>[...p,{role:'assistant',content:'Connection error.'}]);}setBusy(false);};
+  const sendFocus=async(override?:string)=>{const m=override||input.trim();if(!m||busy||!focusLead)return;if(!override)setInput('');setBusy(true);setFocusMsgs(p=>[...p,{role:'user',content:m}]);try{const r=await apiJson('/chat/focus',{message:m,lead_id:focusLead.id,history:focusMsgs.slice(-10)});const d=await r.json();setFocusMsgs(p=>[...p,{role:'assistant',content:d.reply,written:true}]);if(d.lead)setFocusLead(d.lead);}catch{setFocusMsgs(p=>[...p,{role:'assistant',content:'Connection error.'}]);}setBusy(false);};
+  const enterFocus=(lead:Lead)=>{setFocusLead(lead);setFocusMsgs([{role:'assistant',content:`Focused on ${lead.full_name} — ${lead.title} at ${lead.company}.\n\n${lead.buying_signals?'Intel on file. Ready when you are.':'No scout data yet — I can scout this lead before you call.'}\n\nType notes during the call and I'll write them to the profile.`}]);};
+  const exitFocus=()=>{setFocusLead(null);setFocusMsgs([]);load();};
+  const scout=async()=>{setScouting(true);try{await api('/scout/run?limit=10',{method:'POST'});load();}catch{}setScouting(false);};
+  const scoutWarm=async()=>{setScoutingWarm(true);try{await api('/scout/run?tier=warm&limit=50',{method:'POST'});load();}catch{}setScoutingWarm(false);};
+  const rank=async()=>{setRanking(true);try{await api('/rank/run',{method:'POST'});load();}catch{}setRanking(false);};
+  if(!authed)return<LoginScreen onLogin={handleLogin}/>;
+  // ─── CALL MODE ─────────────────────────────────────────
+  if(focusLead)return(
+    <div style={{height:'100vh',display:'flex',flexDirection:'column',background:'#020617',color:'#e2e8f0',fontFamily:"'DM Sans',sans-serif"}}>
+      {showSettings&&<SettingsPanel user={user} onClose={()=>setShowSettings(false)} onLogout={handleLogout}/>}
+      <div style={{display:'flex',alignItems:'center',padding:'10px 20px',borderBottom:'1px solid #111827',background:'#060a14',flexShrink:0}}>
+        <button onClick={exitFocus} style={{padding:'6px 12px',borderRadius:6,border:'1px solid #1e293b',background:'transparent',color:'#64748b',fontSize:12,cursor:'pointer',marginRight:16}}>← Back</button>
+        <div style={{display:'flex',alignItems:'center',gap:8}}><div style={{width:24,height:24,borderRadius:5,background:'linear-gradient(135deg,#7c3aed,#ec4899)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:800,color:'#fff'}}>◈</div><span style={{fontSize:13,fontWeight:700,color:'#f1f5f9'}}>Rose Glass Sales</span></div>
+        <div style={{marginLeft:'auto',padding:'4px 12px',borderRadius:12,fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:1,background:'#ef444420',color:'#ef4444',border:'1px solid #ef444440',animation:'pulse 2s ease-in-out infinite'}}>● Live — {focusLead.full_name}</div>
+        <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.6}}`}</style>
+      </div>
+      <CallProfile lead={focusLead}/>
+      <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+        <div style={{flex:1,overflowY:'auto',padding:'14px 20px 0'}}>
+          {focusMsgs.map((m,i)=>(<div key={i} style={{display:'flex',justifyContent:m.role==='user'?'flex-end':'flex-start',marginBottom:10}}><div><div style={{maxWidth:'75%',padding:'10px 14px',borderRadius:10,fontSize:13,lineHeight:1.6,whiteSpace:'pre-wrap',wordBreak:'break-word',background:m.role==='user'?'#7c3aed':'#111827',color:m.role==='user'?'#fff':'#e2e8f0',borderBottomRightRadius:m.role==='user'?2:10,borderBottomLeftRadius:m.role==='user'?10:2}}>{m.content}</div>{m.role==='assistant'&&m.written&&<div style={{display:'inline-flex',alignItems:'center',gap:4,marginTop:4,padding:'2px 8px',borderRadius:4,fontSize:9,background:'#34d39915',color:'#34d399',border:'1px solid #34d39930',fontWeight:600,textTransform:'uppercase',letterSpacing:0.5}}>✓ Written to profile</div>}</div></div>))}
+          {busy&&<div style={{display:'flex',marginBottom:10}}><div style={{padding:'10px 14px',borderRadius:10,background:'#111827',color:'#64748b',fontSize:13}}>◈ Working...</div></div>}
+          <div ref={focusEndRef}/>
+        </div>
+        <div style={{padding:'8px 20px 14px',borderTop:'1px solid #111827',flexShrink:0}}>
+          <QuickChips onSend={sendFocus}/>
+          <div style={{display:'flex',gap:6}}><input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&!e.shiftKey&&(e.preventDefault(),sendFocus())} placeholder="Type call notes, ask questions..." style={{flex:1,padding:'10px 14px',borderRadius:8,border:'1px solid #1e293b',background:'#0a0f1a',color:'#f1f5f9',fontSize:13,outline:'none'}}/><button onClick={()=>sendFocus()} disabled={busy} style={{padding:'10px 18px',borderRadius:8,border:'none',background:busy?'#334155':'linear-gradient(135deg,#7c3aed,#ec4899)',color:'#fff',fontWeight:600,cursor:busy?'default':'pointer',fontSize:13}}>Send</button></div>
+        </div>
+      </div>
+    </div>
+  );
+  // ─── MAIN VIEW ─────────────────────────────────────────
+  return(
+    <div style={{height:'100vh',display:'flex',flexDirection:'column',background:'#020617',color:'#e2e8f0',fontFamily:"'DM Sans',-apple-system,sans-serif"}}>
+      {showSettings&&<SettingsPanel user={user} onClose={()=>setShowSettings(false)} onLogout={handleLogout}/>}
+      <header style={{display:'flex',alignItems:'center',padding:'10px 20px',borderBottom:'1px solid #111827',background:'#060a14'}}>
+        <div style={{display:'flex',alignItems:'center',gap:10}}><div style={{width:30,height:30,borderRadius:7,background:'linear-gradient(135deg,#7c3aed,#ec4899)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,fontWeight:800,color:'#fff'}}>◈</div><div><div style={{fontSize:14,fontWeight:700,color:'#f1f5f9',letterSpacing:-0.3}}>Rose Glass Sales</div><div style={{fontSize:9,color:'#475569',letterSpacing:1.5,textTransform:'uppercase'}}>CERATA Intelligence</div></div></div>
+        <nav style={{display:'flex',gap:2,marginLeft:28,background:'#0f172a',borderRadius:8,padding:2}}>{(['chat','leads'] as const).map(v=>(<button key={v} onClick={()=>{setView(v);if(v==='leads')fetchLeads(filter);}} style={{padding:'5px 14px',borderRadius:6,border:'none',cursor:'pointer',fontSize:12,fontWeight:500,background:view===v?'#1e293b':'transparent',color:view===v?'#f1f5f9':'#64748b'}}>{v.charAt(0).toUpperCase()+v.slice(1)}</button>))}</nav>
+        <div style={{marginLeft:'auto',display:'flex',gap:6}}>
+          <ActionBtn label={scouting?'Scouting…':'Scout 10'} color="#8b5cf6" disabled={scouting} onClick={scout}/>
+          <ActionBtn label={scoutingWarm?'Scouting…':'Scout Warm'} color="#f59e0b" disabled={scoutingWarm} onClick={scoutWarm}/>
+          <ActionBtn label={ranking?'Ranking…':'Rank All'} color="#06b6d4" disabled={ranking} onClick={rank}/>
+          <button onClick={()=>setShowSettings(true)} style={{padding:'5px 10px',borderRadius:6,border:'1px solid #1e293b',background:'transparent',color:'#64748b',fontSize:14,cursor:'pointer'}} title="Settings">⚙</button>
+        </div>
+      </header>
+      {stats&&<div style={{display:'flex',gap:14,padding:'8px 20px',borderBottom:'1px solid #111827',fontSize:11,color:'#475569',alignItems:'center',background:'#060a14'}}><span style={{color:'#e2e8f0',fontWeight:600}}>{stats.total}</span>{Object.entries(stats.tiers||{}).sort((a,b)=>b[1]-a[1]).map(([tier,n])=>(<span key={tier} style={{display:'flex',alignItems:'center',gap:3}}><span style={{width:6,height:6,borderRadius:3,background:TC[tier]||'#52525b'}}/>{n} {tier}</span>))}</div>}
+      {view==='chat'&&(<div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}><div style={{flex:1,overflowY:'auto',padding:'16px 20px 0'}}>{msgs.map((m,i)=>(<div key={i} style={{display:'flex',justifyContent:m.role==='user'?'flex-end':'flex-start',marginBottom:10}}><div style={{maxWidth:'72%',padding:'10px 14px',borderRadius:10,fontSize:13,lineHeight:1.6,whiteSpace:'pre-wrap',wordBreak:'break-word',background:m.role==='user'?'#7c3aed':'#111827',color:m.role==='user'?'#fff':'#e2e8f0',borderBottomRightRadius:m.role==='user'?2:10,borderBottomLeftRadius:m.role==='user'?10:2}}>{m.content}</div></div>))}{busy&&<div style={{display:'flex',marginBottom:10}}><div style={{padding:'10px 14px',borderRadius:10,background:'#111827',color:'#64748b',fontSize:13}}>◈ Analyzing...</div></div>}<div ref={endRef}/></div><CsvDropZone onUploaded={m=>{setMsgs(p=>[...p,{role:'assistant',content:m}]);load();}}/><div style={{padding:'10px 20px 16px',borderTop:'1px solid #111827'}}><div style={{display:'flex',gap:6}}><input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&!e.shiftKey&&(e.preventDefault(),send())} placeholder="Ask about leads, run analysis, give feedback…" style={{flex:1,padding:'10px 14px',borderRadius:8,border:'1px solid #1e293b',background:'#0a0f1a',color:'#f1f5f9',fontSize:13,outline:'none'}}/><button onClick={send} disabled={busy} style={{padding:'10px 18px',borderRadius:8,border:'none',background:busy?'#334155':'linear-gradient(135deg,#7c3aed,#ec4899)',color:'#fff',fontWeight:600,cursor:busy?'default':'pointer',fontSize:13}}>Send</button></div></div></div>)}
+      {view==='leads'&&(<div style={{flex:1,overflowY:'auto'}}><div style={{padding:'10px 14px',display:'flex',gap:5,borderBottom:'1px solid #111827',flexWrap:'wrap'}}>{['hot','warm','cold','disqualified'].map(t=>(<button key={t} onClick={()=>{const next=filter===t?null:t;setFilter(next);fetchLeads(next);}} style={{padding:'3px 10px',borderRadius:10,border:`1px solid ${TC[t]}44`,background:filter===t?`${TC[t]}20`:'transparent',color:filter===t?TC[t]:'#64748b',fontSize:10,cursor:'pointer',fontWeight:600,textTransform:'uppercase',letterSpacing:0.5}}>{t}</button>))}</div>{leads.map(l=><LeadCard key={l.id} lead={l} onFocus={enterFocus}/>)}{!leads.length&&<div style={{padding:40,textAlign:'center',color:'#475569',fontSize:13}}>No leads match.</div>}</div>)}
+    </div>
   );
 }

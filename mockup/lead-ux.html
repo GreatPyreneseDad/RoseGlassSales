@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Rose Glass Sales — Combined UX Mockup</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #020617; color: #e2e8f0; font-family: 'DM Sans', -apple-system, sans-serif; }
+  :root { --psi: #a78bfa; --rho: #22d3ee; --q: #fbbf24; --f: #34d399; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+
+  .lead-card { padding: 18px 20px; border-bottom: 1px solid #1e293b; cursor: pointer; border-left: 3px solid transparent; transition: all 0.15s; }
+  .lead-card:hover { background: #0c1425; }
+  .lead-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px; }
+  .lead-name { font-size: 15px; font-weight: 600; color: #f1f5f9; }
+  .lead-subtitle { font-size: 12px; color: #64748b; margin-top: 3px; }
+  .lead-rank { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #475569; margin-right: 6px; }
+
+  .tier { display: inline-block; padding: 3px 12px; border-radius: 10px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; }
+  .tier-hot { background: #ef444418; color: #ef4444; border: 1px solid #ef444433; }
+  .tier-warm { background: #f59e0b18; color: #f59e0b; border: 1px solid #f59e0b33; }
+  .tier-cold { background: #3b82f618; color: #3b82f6; border: 1px solid #3b82f633; }
+
+  /* Combined layout: radar left, dims right */
+  .profile-body { display: flex; gap: 20px; align-items: start; }
+  .radar-col { flex-shrink: 0; }
+  .dims-col { flex: 1; min-width: 0; }
+
+  /* Dimension rows */
+  .dims-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 20px; }
+  .dim-row { display: flex; align-items: center; gap: 8px; }
+  .dim-icon { width: 28px; height: 28px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; font-family: 'JetBrains Mono', monospace; }
+  .dim-icon-psi { background: #a78bfa15; color: #a78bfa; border: 1px solid #a78bfa30; }
+  .dim-icon-rho { background: #22d3ee15; color: #22d3ee; border: 1px solid #22d3ee30; }
+  .dim-icon-q { background: #fbbf2415; color: #fbbf24; border: 1px solid #fbbf2430; }
+  .dim-icon-f { background: #34d39915; color: #34d399; border: 1px solid #34d39930; }
+  .dim-content { flex: 1; min-width: 0; }
+  .dim-label { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+  .dim-bar-track { height: 5px; background: #1e293b; border-radius: 3px; margin-top: 3px; overflow: hidden; }
+  .dim-bar-fill { height: 100%; border-radius: 3px; transition: width 0.4s ease; }
+  .dim-context { font-size: 10px; color: #94a3b8; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dim-value { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #475569; flex-shrink: 0; width: 30px; text-align: right; }
+
+  /* Coherence bar */
+  .coherence-bar { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 7px 12px; background: #111827; border-radius: 8px; border: 1px solid #1e293b; }
+  .coherence-meter { flex: 1; height: 6px; background: #1e293b; border-radius: 3px; overflow: hidden; }
+  .coherence-meter-fill { height: 100%; border-radius: 3px; }
+
+  /* Fracture callout */
+  .fracture-box { margin-top: 12px; padding: 10px 14px; background: #16122a; border: 1px solid #7c3aed30; border-radius: 8px; font-size: 11px; color: #c4b5fd; line-height: 1.5; }
+  .fracture-box-cold { background: #0f172a; border-color: #475569; }
+  .fracture-box-cold span, .fracture-box-cold { color: #94a3b8; }
+
+  .container { max-width: 800px; margin: 40px auto; padding: 0 20px; }
+  h2.section-title { font-size: 12px; color: #475569; text-transform: uppercase; letter-spacing: 2px; font-weight: 600; margin: 48px 0 16px; }
+  h2.section-title:first-child { margin-top: 20px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- ═══ HOT LEAD ═══ -->
+  <h2 class="section-title">Hot lead — radar + labeled dims + coherence</h2>
+  <div class="lead-card">
+    <div class="lead-header">
+      <div>
+        <div class="lead-name"><span class="lead-rank">#1</span> Joe Roller</div>
+        <div class="lead-subtitle">Owner · Lucent Recovery and Wellness · Austin, Texas</div>
+      </div>
+      <span class="tier tier-hot">hot</span>
+    </div>
+    <div class="profile-body">
+      <div class="radar-col">
+        <svg width="120" height="120" viewBox="0 0 120 120">
+          <!-- Grid rings -->
+          <polygon points="60,12 108,60 60,108 12,60" fill="none" stroke="#1e293b" stroke-width="1" />
+          <polygon points="60,28 92,60 60,92 28,60" fill="none" stroke="#1e293b" stroke-width="0.5" />
+          <polygon points="60,44 76,60 60,76 44,60" fill="none" stroke="#1e293b" stroke-width="0.3" />
+          <!-- Axis lines -->
+          <line x1="60" y1="12" x2="60" y2="108" stroke="#1e293b" stroke-width="0.3" />
+          <line x1="12" y1="60" x2="108" y2="60" stroke="#1e293b" stroke-width="0.3" />
+          <!-- Data: Ψ=0.70 top, ρ=1.0 right, q=0.46 bottom, f=1.0 left -->
+          <polygon points="60,25.6 108,60 60,85.9 12,60" fill="#8b5cf618" stroke="#8b5cf6" stroke-width="1.5" />
+          <!-- Vertex dots -->
+          <circle cx="60" cy="25.6" r="3" fill="var(--psi)" />
+          <circle cx="108" cy="60" r="3" fill="var(--rho)" />
+          <circle cx="60" cy="85.9" r="3" fill="var(--q)" />
+          <circle cx="12" cy="60" r="3" fill="var(--f)" />
+          <!-- Labels -->
+          <text x="60" y="9" text-anchor="middle" font-size="9" fill="#a78bfa" font-family="JetBrains Mono" font-weight="500">Ψ .70</text>
+          <text x="114" y="63" text-anchor="start" font-size="9" fill="#22d3ee" font-family="JetBrains Mono" font-weight="500">ρ 1.0</text>
+          <text x="60" y="118" text-anchor="middle" font-size="9" fill="#fbbf24" font-family="JetBrains Mono" font-weight="500">q .46</text>
+          <text x="6" y="63" text-anchor="end" font-size="9" fill="#34d399" font-family="JetBrains Mono" font-weight="500">f 1.0</text>
+        </svg>
+      </div>
+      <div class="dims-col">
+        <div class="dims-grid">
+          <div class="dim-row">
+            <div class="dim-icon dim-icon-psi">Ψ</div>
+            <div class="dim-content">
+              <div class="dim-label">Intent</div>
+              <div class="dim-bar-track"><div class="dim-bar-fill" style="width:70%;background:var(--psi)"></div></div>
+              <div class="dim-context">Active expansion signals</div>
+            </div>
+            <div class="dim-value">0.70</div>
+          </div>
+          <div class="dim-row">
+            <div class="dim-icon dim-icon-rho">ρ</div>
+            <div class="dim-content">
+              <div class="dim-label">Authority</div>
+              <div class="dim-bar-track"><div class="dim-bar-fill" style="width:100%;background:var(--rho)"></div></div>
+              <div class="dim-context">Owner — full buying power</div>
+            </div>
+            <div class="dim-value">1.00</div>
+          </div>
+          <div class="dim-row">
+            <div class="dim-icon dim-icon-q">q</div>
+            <div class="dim-content">
+              <div class="dim-label">Urgency</div>
+              <div class="dim-bar-track"><div class="dim-bar-fill" style="width:46%;background:var(--q)"></div></div>
+              <div class="dim-context">Regulatory + funding pressure</div>
+            </div>
+            <div class="dim-value">0.46</div>
+          </div>
+          <div class="dim-row">
+            <div class="dim-icon dim-icon-f">f</div>
+            <div class="dim-content">
+              <div class="dim-label">Fit</div>
+              <div class="dim-bar-track"><div class="dim-bar-fill" style="width:100%;background:var(--f)"></div></div>
+              <div class="dim-context">Recovery vertical — perfect ICP</div>
+            </div>
+            <div class="dim-value">1.00</div>
+          </div>
+        </div>
+        <div class="coherence-bar">
+          <span style="font-size:10px;color:#64748b">Coherence</span>
+          <div class="coherence-meter"><div class="coherence-meter-fill" style="width:66.8%;background:linear-gradient(90deg,#7c3aed,#ec4899)"></div></div>
+          <span class="mono" style="font-size:16px;font-weight:700;color:#ef4444">2.67</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ WARM LEAD WITH FRACTURE ═══ -->
+  <h2 class="section-title">Warm lead with dimensional fracture</h2>
+  <div class="lead-card">
+    <div class="lead-header">
+      <div>
+        <div class="lead-name"><span class="lead-rank">#24</span> Kim Burdett</div>
+        <div class="lead-subtitle">Asst. VP, Digital Marketing · National Council for Mental Wellbeing</div>
+      </div>
+      <span class="tier tier-warm">warm</span>
+    </div>
+    <div class="profile-body">
+      <div class="radar-col">
+        <svg width="120" height="120" viewBox="0 0 120 120">
+          <polygon points="60,12 108,60 60,108 12,60" fill="none" stroke="#1e293b" stroke-width="1" />
+          <polygon points="60,28 92,60 60,92 28,60" fill="none" stroke="#1e293b" stroke-width="0.5" />
+          <polygon points="60,44 76,60 60,76 44,60" fill="none" stroke="#1e293b" stroke-width="0.3" />
+          <line x1="60" y1="12" x2="60" y2="108" stroke="#1e293b" stroke-width="0.3" />
+          <line x1="12" y1="60" x2="108" y2="60" stroke="#1e293b" stroke-width="0.3" />
+          <!-- Ψ=0.50, ρ=0.40, q=0.60, f=0.85 — lopsided shape shows fracture -->
+          <polygon points="60,36 79.2,60 60,79.2 19.2,60" fill="#f59e0b15" stroke="#f59e0b" stroke-width="1.5" />
+          <circle cx="60" cy="36" r="3" fill="var(--psi)" />
+          <circle cx="79.2" cy="60" r="3" fill="var(--rho)" />
+          <circle cx="60" cy="79.2" r="3" fill="var(--q)" />
+          <circle cx="19.2" cy="60" r="3" fill="var(--f)" />
+          <text x="60" y="9" text-anchor="middle" font-size="9" fill="#a78bfa" font-family="JetBrains Mono" font-weight="500">Ψ .50</text>
+          <text x="114" y="63" text-anchor="start" font-size="9" fill="#22d3ee" font-family="JetBrains Mono" font-weight="500">ρ .40</text>
+          <text x="60" y="118" text-anchor="middle" font-size="9" fill="#fbbf24" font-family="JetBrains Mono" font-weight="500">q .60</text>
+          <text x="6" y="63" text-anchor="end" font-size="9" fill="#34d399" font-family="JetBrains Mono" font-weight="500">f .85</text>
+        </svg>
+      </div>
+      <div class="dims-col">
+        <div class="dims-grid">
+          <div class="dim-row">
+            <div class="dim-icon dim-icon-psi">Ψ</div>
+            <div class="dim-content">
+              <div class="dim-label">Intent</div>
+              <div class="dim-bar-track"><div class="dim-bar-fill" style="width:50%;background:var(--psi)"></div></div>
+              <div class="dim-context">Moderate need signals</div>
+            </div>
+            <div class="dim-value">0.50</div>
+          </div>
+          <div class="dim-row">
+            <div class="dim-icon dim-icon-rho">ρ</div>
+            <div class="dim-content">
+              <div class="dim-label">Authority</div>
+              <div class="dim-bar-track"><div class="dim-bar-fill" style="width:40%;background:var(--rho)"></div></div>
+              <div class="dim-context" style="color:#fbbf24">⚠ Marketing role — may lack budget power</div>
+            </div>
+            <div class="dim-value">0.40</div>
+          </div>
+          <div class="dim-row">
+            <div class="dim-icon dim-icon-q">q</div>
+            <div class="dim-content">
+              <div class="dim-label">Urgency</div>
+              <div class="dim-bar-track"><div class="dim-bar-fill" style="width:60%;background:var(--q)"></div></div>
+              <div class="dim-context">$32M MacKenzie Scott grant landed</div>
+            </div>
+            <div class="dim-value">0.60</div>
+          </div>
+          <div class="dim-row">
+            <div class="dim-icon dim-icon-f">f</div>
+            <div class="dim-content">
+              <div class="dim-label">Fit</div>
+              <div class="dim-bar-track"><div class="dim-bar-fill" style="width:85%;background:var(--f)"></div></div>
+              <div class="dim-context">Mental health advocacy — strong ICP</div>
+            </div>
+            <div class="dim-value">0.85</div>
+          </div>
+        </div>
+        <div class="coherence-bar">
+          <span style="font-size:10px;color:#64748b">Coherence</span>
+          <div class="coherence-meter"><div class="coherence-meter-fill" style="width:51%;background:linear-gradient(90deg,#7c3aed,#f59e0b)"></div></div>
+          <span class="mono" style="font-size:16px;font-weight:700;color:#f59e0b">2.04</span>
+        </div>
+      </div>
+    </div>
+    <div class="fracture-box">
+      <span style="font-weight:700">⚡ Fracture:</span> High urgency + moderate authority — $32M budget event but Kim may not be the final decision maker. <strong style="color:#e2e8f0">Action: Find her boss.</strong>
+    </div>
+  </div>
+
+  <!-- ═══ COLD LEAD ═══ -->
+  <h2 class="section-title">Cold lead — visible imbalance in radar</h2>
+  <div class="lead-card">
+    <div class="lead-header">
+      <div>
+        <div class="lead-name"><span class="lead-rank">#340</span> Matt Armstrong</div>
+        <div class="lead-subtitle">Owner · Armstrong Family Counseling · Missouri</div>
+      </div>
+      <span class="tier tier-cold">cold</span>
+    </div>
+    <div class="profile-body">
+      <div class="radar-col">
+        <svg width="120" height="120" viewBox="0 0 120 120">
+          <polygon points="60,12 108,60 60,108 12,60" fill="none" stroke="#1e293b" stroke-width="1" />
+          <polygon points="60,28 92,60 60,92 28,60" fill="none" stroke="#1e293b" stroke-width="0.5" />
+          <polygon points="60,44 76,60 60,76 44,60" fill="none" stroke="#1e293b" stroke-width="0.3" />
+          <line x1="60" y1="12" x2="60" y2="108" stroke="#1e293b" stroke-width="0.3" />
+          <line x1="12" y1="60" x2="108" y2="60" stroke="#1e293b" stroke-width="0.3" />
+          <!-- Ψ=0.10, ρ=0.90, q=0.10, f=0.85 — tall narrow diamond = authority without intent -->
+          <polygon points="60,55.2 103.2,60 60,55.2 19.2,60" fill="#3b82f610" stroke="#3b82f6" stroke-width="1.5" />
+          <!-- Better: actual shape -->
+          <polygon points="60,55.2 103.2,60 60,98.4 19.2,60" fill="#3b82f610" stroke="#3b82f6" stroke-width="1.5" />
+          <circle cx="60" cy="55.2" r="3" fill="var(--psi)" opacity="0.5" />
+          <circle cx="103.2" cy="60" r="3" fill="var(--rho)" />
+          <circle cx="60" cy="98.4" r="3" fill="var(--q)" opacity="0.5" />
+          <circle cx="19.2" cy="60" r="3" fill="var(--f)" />
+          <text x="60" y="9" text-anchor="middle" font-size="9" fill="#a78bfa" font-family="JetBrains Mono" font-weight="500" opacity="0.5">Ψ .10</text>
+          <text x="114" y="63" text-anchor="start" font-size="9" fill="#22d3ee" font-family="JetBrains Mono" font-weight="500">ρ .90</text>
+          <text x="60" y="118" text-anchor="middle" font-size="9" fill="#fbbf24" font-family="JetBrains Mono" font-weight="500" opacity="0.5">q .10</text>
+          <text x="6" y="63" text-anchor="end" font-size="9" fill="#34d399" font-family="JetBrains Mono" font-weight="500">f .85</text>
+        </svg>
+      </div>
+      <div class="dims-col">
+        <div class="dims-grid">
+          <div class="dim-row">
+            <div class="dim-icon dim-icon-psi" style="opacity:0.5">Ψ</div>
+            <div class="dim-content">
+              <div class="dim-label">Intent</div>
+              <div class="dim-bar-track"><div class="dim-bar-fill" style="width:10%;background:var(--psi);opacity:0.5"></div></div>
+              <div class="dim-context" style="color:#475569">No buying motion detected</div>
+            </div>
+            <div class="dim-value" style="opacity:0.5">0.10</div>
+          </div>
+          <div class="dim-row">
+            <div class="dim-icon dim-icon-rho">ρ</div>
+            <div class="dim-content">
+              <div class="dim-label">Authority</div>
+              <div class="dim-bar-track"><div class="dim-bar-fill" style="width:90%;background:var(--rho)"></div></div>
+              <div class="dim-context">Owner — full decision power</div>
+            </div>
+            <div class="dim-value">0.90</div>
+          </div>
+          <div class="dim-row">
+            <div class="dim-icon dim-icon-q" style="opacity:0.5">q</div>
+            <div class="dim-content">
+              <div class="dim-label">Urgency</div>
+              <div class="dim-bar-track"><div class="dim-bar-fill" style="width:10%;background:var(--q);opacity:0.5"></div></div>
+              <div class="dim-context" style="color:#475569">No time pressure</div>
+            </div>
+            <div class="dim-value" style="opacity:0.5">0.10</div>
+          </div>
+          <div class="dim-row">
+            <div class="dim-icon dim-icon-f">f</div>
+            <div class="dim-content">
+              <div class="dim-label">Fit</div>
+              <div class="dim-bar-track"><div class="dim-bar-fill" style="width:85%;background:var(--f)"></div></div>
+              <div class="dim-context">Mental health — good ICP match</div>
+            </div>
+            <div class="dim-value">0.85</div>
+          </div>
+        </div>
+        <div class="coherence-bar">
+          <span style="font-size:10px;color:#64748b">Coherence</span>
+          <div class="coherence-meter"><div class="coherence-meter-fill" style="width:25%;background:linear-gradient(90deg,#3b82f6,#64748b)"></div></div>
+          <span class="mono" style="font-size:16px;font-weight:700;color:#3b82f6">1.01</span>
+        </div>
+      </div>
+    </div>
+    <div class="fracture-box fracture-box-cold">
+      <span style="font-weight:700">⚡ Fracture:</span> High authority + strong fit + zero intent — this is a perfect ICP who hasn't been activated yet. Monitor for growth triggers.
+    </div>
+  </div>
+
+  <!-- ═══ SECOND HOT LEAD — different shape ═══ -->
+  <h2 class="section-title">Another hot lead — notice the radar shape difference</h2>
+  <div class="lead-card">
+    <div class="lead-header">
+      <div>
+        <div class="lead-name"><span class="lead-rank">#3</span> Jessica McCall</div>
+        <div class="lead-subtitle">Owner · The Haven · Charlotte, North Carolina</div>
+      </div>
+      <span class="tier tier-hot">hot</span>
+    </div>
+    <div class="profile-body">
+      <div class="radar-col">
+        <svg width="120" height="120" viewBox="0 0 120 120">
+          <polygon points="60,12 108,60 60,108 12,60" fill="none" stroke="#1e293b" stroke-width="1" />
+          <polygon points="60,28 92,60 60,92 28,60" fill="none" stroke="#1e293b" stroke-width="0.5" />
+          <polygon points="60,44 76,60 60,76 44,60" fill="none" stroke="#1e293b" stroke-width="0.3" />
+          <line x1="60" y1="12" x2="60" y2="108" stroke="#1e293b" stroke-width="0.3" />
+          <line x1="12" y1="60" x2="108" y2="60" stroke="#1e293b" stroke-width="0.3" />
+          <!-- Ψ=0.67, ρ=1.0, q=0.48, f=1.0 — very similar to Joe but slightly less intent -->
+          <polygon points="60,27.8 108,60 60,84.9 12,60" fill="#8b5cf618" stroke="#8b5cf6" stroke-width="1.5" />
+          <circle cx="60" cy="27.8" r="3" fill="var(--psi)" />
+          <circle cx="108" cy="60" r="3" fill="var(--rho)" />
+          <circle cx="60" cy="84.9" r="3" fill="var(--q)" />
+          <circle cx="12" cy="60" r="3" fill="var(--f)" />
+          <text x="60" y="9" text-anchor="middle" font-size="9" fill="#a78bfa" font-family="JetBrains Mono" font-weight="500">Ψ .67</text>
+          <text x="114" y="63" text-anchor="start" font-size="9" fill="#22d3ee" font-family="JetBrains Mono" font-weight="500">ρ 1.0</text>
+          <text x="60" y="118" text-anchor="middle" font-size="9" fill="#fbbf24" font-family="JetBrains Mono" font-weight="500">q .48</text>
+          <text x="6" y="63" text-anchor="end" font-size="9" fill="#34d399" font-family="JetBrains Mono" font-weight="500">f 1.0</text>
+        </svg>
+      </div>
+      <div class="dims-col">
+        <div class="dims-grid">
+          <div class="dim-row">
+            <div class="dim-icon dim-icon-psi">Ψ</div>
+            <div class="dim-content">
+              <div class="dim-label">Intent</div>
+              <div class="dim-bar-track"><div class="dim-bar-fill" style="width:67%;background:var(--psi)"></div></div>
+              <div class="dim-context">Hiring therapists, adding programs</div>
+            </div>
+            <div class="dim-value">0.67</div>
+          </div>
+          <div class="dim-row">
+            <div class="dim-icon dim-icon-rho">ρ</div>
+            <div class="dim-content">
+              <div class="dim-label">Authority</div>
+              <div class="dim-bar-track"><div class="dim-bar-fill" style="width:100%;background:var(--rho)"></div></div>
+              <div class="dim-context">Owner — full buying power</div>
+            </div>
+            <div class="dim-value">1.00</div>
+          </div>
+          <div class="dim-row">
+            <div class="dim-icon dim-icon-q">q</div>
+            <div class="dim-content">
+              <div class="dim-label">Urgency</div>
+              <div class="dim-bar-track"><div class="dim-bar-fill" style="width:48%;background:var(--q)"></div></div>
+              <div class="dim-context">20%+ vacancy rates in market</div>
+            </div>
+            <div class="dim-value">0.48</div>
+          </div>
+          <div class="dim-row">
+            <div class="dim-icon dim-icon-f">f</div>
+            <div class="dim-content">
+              <div class="dim-label">Fit</div>
+              <div class="dim-bar-track"><div class="dim-bar-fill" style="width:100%;background:var(--f)"></div></div>
+              <div class="dim-context">Trauma + addiction specialty</div>
+            </div>
+            <div class="dim-value">1.00</div>
+          </div>
+        </div>
+        <div class="coherence-bar">
+          <span style="font-size:10px;color:#64748b">Coherence</span>
+          <div class="coherence-meter"><div class="coherence-meter-fill" style="width:64.5%;background:linear-gradient(90deg,#7c3aed,#ec4899)"></div></div>
+          <span class="mono" style="font-size:16px;font-weight:700;color:#ef4444">2.58</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="height:80px"></div>
+</div>
+</body>
+</html>

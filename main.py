@@ -1051,6 +1051,84 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
 
     return {"reply": reply, "stats": {"total": sum(all_tiers.values()), "tiers": all_tiers}}
 
+# ─── Focused Chat (Call Mode) ──────────────────────────
+
+class FocusChatRequest(BaseModel):
+    message: str
+    lead_id: str
+    history: List[Dict[str, str]] = []
+
+FOCUS_SYSTEM = """You are the Rose Glass Sales Intelligence Agent in CALL MODE — focused on a single lead.
+
+The user is on a live call or preparing for one. Your job:
+1. Before the call: provide intel, suggested openers, talking points
+2. During the call: capture what the user types as call notes, update the lead profile in real time
+3. After the call: summarize, draft follow-ups, re-rank
+
+You have tools to update this lead's record. ALWAYS use update_lead to write notes, status changes, 
+and new intel that the user shares from the call. Every piece of info from the conversation should be 
+persisted — don't just acknowledge, WRITE IT.
+
+When the user shares new info (e.g. "they're hiring 3 people", "uses spreadsheets for intake"), 
+immediately call update_lead to append it to buying_signals and user_notes.
+
+After significant new intel, call rank_lead to re-compute dimensions.
+
+Be concise — the user is multitasking on a call. Lead with the actionable insight."""
+
+@app.post("/api/chat/focus")
+async def focus_chat(req: FocusChatRequest, authorization: str = Header(None)):
+    user = await get_current_user(authorization)
+
+    # Get full lead data
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/leads?id=eq.{req.lead_id}&user_id=eq.{user['user_id']}",
+            headers=HEADERS_SB)
+        leads = resp.json()
+    if not leads:
+        raise HTTPException(404, "Lead not found")
+    lead = leads[0]
+
+    context = f"FOCUSED LEAD:\n{json.dumps(lead, indent=1)}"
+    messages = [*req.history, {"role": "user", "content": f"{context}\n\nUser: {req.message}"}]
+
+    # Agentic loop with tools
+    max_iterations = 5
+    assistant_content = []
+    for _ in range(max_iterations):
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post("https://api.anthropic.com/v1/messages",
+                headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
+                json={"model": "claude-sonnet-4-20250514", "max_tokens": 4096, "system": FOCUS_SYSTEM,
+                      "tools": CHAT_TOOLS, "messages": messages})
+            resp.raise_for_status()
+            data = resp.json()
+
+        assistant_content = data.get("content", [])
+        messages.append({"role": "assistant", "content": assistant_content})
+
+        tool_uses = [b for b in assistant_content if b.get("type") == "tool_use"]
+        if not tool_uses:
+            break
+
+        tool_results = []
+        for tu in tool_uses:
+            result = await _exec_tool(tu["name"], tu["input"], user_id=user["user_id"])
+            tool_results.append({"type": "tool_result", "tool_use_id": tu["id"], "content": result})
+        messages.append({"role": "user", "content": tool_results})
+
+    reply = "\n".join(b["text"] for b in assistant_content if b.get("type") == "text") or "Done."
+
+    # Get updated lead after any tool calls
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/leads?id=eq.{req.lead_id}&user_id=eq.{user['user_id']}",
+            headers=HEADERS_SB)
+        updated_lead = resp.json()[0] if resp.json() else lead
+
+    return {"reply": reply, "lead": updated_lead}
+
 # ─── Lead CRUD ────────────────────────────────────────────
 
 @app.get("/api/leads")
