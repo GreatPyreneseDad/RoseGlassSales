@@ -92,7 +92,9 @@ function Tier({t}:{t:string}) { const c=TC[t]||'#52525b'; return <span style={{p
 
 // ─── Lead Card ───────────────────────────────────────────
 function LeadCard({ lead, onFocus }: { lead:Lead; onFocus:(l:Lead)=>void }) {
+  const [open, setOpen] = useState(false);
   const hasFrac = lead.dimensional_fractures && lead.dimensional_fractures !== 'No fractures detected';
+  const hasSignals = lead.buying_signals && !lead.buying_signals.startsWith('Scout error');
   const tc = TC[lead.qualification_tier]||'#52525b';
   return (
     <div style={{padding:'18px 20px',borderBottom:'1px solid #1e293b'}}>
@@ -120,7 +122,54 @@ function LeadCard({ lead, onFocus }: { lead:Lead; onFocus:(l:Lead)=>void }) {
         </div>
       </div>
       {hasFrac&&<div style={{marginTop:10,padding:'10px 14px',background:'#16122a',border:'1px solid #7c3aed30',borderRadius:8,fontSize:11,color:'#c4b5fd',lineHeight:1.5}}><span style={{fontWeight:700}}>⚡ Fracture: </span>{lead.dimensional_fractures}</div>}
-      <button onClick={()=>onFocus(lead)} style={{marginTop:10,padding:'6px 14px',borderRadius:6,border:'1px solid #7c3aed33',background:'#7c3aed10',color:'#a78bfa',fontSize:11,fontWeight:600,cursor:'pointer',display:'inline-flex',alignItems:'center',gap:6}}>◈ Focus — Enter Call Mode</button>
+
+      {/* Action row */}
+      <div style={{display:'flex',gap:8,marginTop:10,alignItems:'center'}}>
+        <button onClick={()=>onFocus(lead)} style={{padding:'6px 14px',borderRadius:6,border:'1px solid #7c3aed33',background:'#7c3aed10',color:'#a78bfa',fontSize:11,fontWeight:600,cursor:'pointer',display:'inline-flex',alignItems:'center',gap:6}}>◈ Focus — Call Mode</button>
+        <button onClick={()=>setOpen(!open)} style={{padding:'6px 14px',borderRadius:6,border:'1px solid #1e293b',background:open?'#111827':'transparent',color:open?'#e2e8f0':'#64748b',fontSize:11,fontWeight:500,cursor:'pointer',display:'inline-flex',alignItems:'center',gap:4}}>
+          {open?'▾ Hide':'▸ View'} Intel{hasSignals?' ●':''}
+        </button>
+        {lead.email&&<a href={`mailto:${lead.email}`} style={{padding:'6px 10px',borderRadius:6,border:'1px solid #1e293b',color:'#64748b',fontSize:11,textDecoration:'none',cursor:'pointer'}}>✉ Email</a>}
+        {(lead.linkedin||lead.linkedin_profile_url)&&<a href={lead.linkedin||lead.linkedin_profile_url} target="_blank" rel="noopener noreferrer" style={{padding:'6px 10px',borderRadius:6,border:'1px solid #1e293b',color:'#64748b',fontSize:11,textDecoration:'none',cursor:'pointer'}}>in LinkedIn</a>}
+      </div>
+
+      {/* Expandable intel section */}
+      {open&&(
+        <div style={{marginTop:12,padding:16,background:'#0a0f1a',borderRadius:10,border:'1px solid #1e293b'}}>
+          {/* Contact info */}
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'6px 16px',fontSize:11,marginBottom:14}}>
+            <div><span style={{color:'#475569'}}>Email: </span><span style={{color:'#94a3b8'}}>{lead.email||'—'}</span></div>
+            <div><span style={{color:'#475569'}}>Phone: </span><span style={{color:'#94a3b8'}}>{lead.phone_number1||lead.mobile_phone1||'—'}</span></div>
+            <div><span style={{color:'#475569'}}>Domain: </span>{lead.company_domain?<a href={`https://${lead.company_domain}`} target="_blank" rel="noopener noreferrer" style={{color:'#8b5cf6',textDecoration:'none'}}>{lead.company_domain}</a>:<span style={{color:'#94a3b8'}}>—</span>}</div>
+            <div><span style={{color:'#475569'}}>Industry: </span><span style={{color:'#94a3b8'}}>{lead.company_industry||'—'}</span></div>
+            <div><span style={{color:'#475569'}}>Size: </span><span style={{color:'#94a3b8'}}>{lead.company_size_range||'—'}</span></div>
+            <div><span style={{color:'#475569'}}>Revenue: </span><span style={{color:'#94a3b8'}}>{lead.company_revenue||'—'}</span></div>
+          </div>
+
+          {/* Buying signals */}
+          {hasSignals&&(
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:10,color:'#475569',textTransform:'uppercase',letterSpacing:1.5,fontWeight:600,marginBottom:6}}>Buying Signals</div>
+              <div style={{fontSize:12,color:'#cbd5e1',lineHeight:1.6,background:'#111827',borderRadius:6,padding:12,maxHeight:240,overflowY:'auto',whiteSpace:'pre-wrap',border:'1px solid #1e293b'}}>{lead.buying_signals}</div>
+            </div>
+          )}
+          {!hasSignals&&<div style={{fontSize:12,color:'#475569',fontStyle:'italic',marginBottom:12}}>No buying signals yet — this lead hasn't been scouted.</div>}
+
+          {/* User notes */}
+          {lead.user_notes&&(
+            <div>
+              <div style={{fontSize:10,color:'#475569',textTransform:'uppercase',letterSpacing:1.5,fontWeight:600,marginBottom:6}}>Notes</div>
+              <div style={{fontSize:12,color:'#cbd5e1',lineHeight:1.5,background:'#111827',borderRadius:6,padding:12,whiteSpace:'pre-wrap',border:'1px solid #1e293b'}}>{lead.user_notes}</div>
+            </div>
+          )}
+
+          {/* Status indicators */}
+          <div style={{display:'flex',gap:8,marginTop:12,fontSize:10,color:'#475569'}}>
+            {lead.user_status&&lead.user_status!=='new'&&<span style={{padding:'2px 8px',borderRadius:4,background:'#1e293b',color:'#94a3b8'}}>{lead.user_status}</span>}
+            {lead.outreach_status&&lead.outreach_status!=='none'&&<span style={{padding:'2px 8px',borderRadius:4,background:'#1e293b',color:'#94a3b8'}}>Outreach: {lead.outreach_status}</span>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
