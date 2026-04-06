@@ -923,6 +923,87 @@ async def get_stats():
     return {"total": len(leads), "scored": len(scored), "tiers": tiers,
             "avg_coherence": round(sum(l["coherence_score"] for l in scored)/len(scored), 3) if scored else 0}
 
+# ─── Background Scout Scheduler ───────────────────────────
+
+SCOUT_INTERVAL = int(os.environ.get("SCOUT_INTERVAL_SECONDS", "300"))  # 5 min default
+SCOUT_BATCH = int(os.environ.get("SCOUT_BATCH_SIZE", "5"))
+SCOUT_ENABLED = os.environ.get("SCOUT_ENABLED", "true").lower() == "true"
+
+async def _background_scout_loop():
+    """Continuously scout unscouted leads in the background."""
+    await asyncio.sleep(30)  # Wait for app to fully start
+    logger.info(f"Background scout started: batch={SCOUT_BATCH}, interval={SCOUT_INTERVAL}s, model={SCOUT_MODEL}")
+
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                # Check how many unscouted remain
+                resp = await client.get(
+                    f"{SUPABASE_URL}/rest/v1/leads?buying_signals=is.null&select=id&limit=1",
+                    headers=HEADERS_SB)
+                unscouted = resp.json()
+
+            if not unscouted:
+                logger.info("Background scout: all leads scouted. Sleeping 1 hour.")
+                await asyncio.sleep(3600)
+                continue
+
+            # Scout a batch
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(
+                    f"{SUPABASE_URL}/rest/v1/leads?buying_signals=is.null&order=rank_score.desc.nullslast&limit={SCOUT_BATCH}",
+                    headers=HEADERS_SB)
+                leads = resp.json()
+
+            for lead in leads:
+                try:
+                    signals = await ScoutAgent.scout_lead(lead)
+                    now = datetime.now(timezone.utc).isoformat()
+                    async with httpx.AsyncClient(timeout=30) as client:
+                        await client.patch(
+                            f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead['id']}",
+                            headers=HEADERS_SB,
+                            json={**signals, "buying_signals_updated_at": now,
+                                  "web_signals_updated_at": now, "updated_at": now})
+
+                        # Auto-rank
+                        ld_resp = await client.get(
+                            f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead['id']}&select=id,buying_signals,web_signals,linkedin_summary,title,company_industry,company_size,company_description",
+                            headers=HEADERS_SB)
+                        if ld_resp.json():
+                            ld = ld_resp.json()[0]
+                            analysis = CERATABridge.analyze(
+                                buying_signals=ld.get("buying_signals",""),
+                                web_signals=ld.get("web_signals",""),
+                                linkedin_summary=ld.get("linkedin_summary",""),
+                                title=ld.get("title",""),
+                                company_industry=ld.get("company_industry",""),
+                                company_size=ld.get("company_size") or 0,
+                                company_description=ld.get("company_description",""))
+                            await client.patch(
+                                f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead['id']}",
+                                headers=HEADERS_SB,
+                                json={**analysis, "ranked_at": now, "updated_at": now})
+
+                    logger.info(f"Scout: {lead.get('full_name','')} at {lead.get('company','')}")
+                except Exception as e:
+                    logger.error(f"Scout failed: {lead.get('full_name','')}: {e}")
+
+        except Exception as e:
+            logger.error(f"Background scout error: {e}")
+
+        await asyncio.sleep(SCOUT_INTERVAL)
+
+
+@app.on_event("startup")
+async def startup():
+    if SCOUT_ENABLED and ANTHROPIC_API_KEY:
+        asyncio.create_task(_background_scout_loop())
+        logger.info("Background scout scheduler registered")
+    else:
+        logger.info("Background scout disabled (set SCOUT_ENABLED=true)")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=PORT)
