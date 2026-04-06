@@ -272,7 +272,8 @@ async def health():
 # ─── CSV Upload ────────────────────────────────────────
 
 WIZA_COLUMNS = [
-    "email","full_name","title","locality","region","linkedin","domain",
+    "email","full_name","first_name","last_name","title","locality","region",
+    "location","linkedin","domain",
     "phone_number1","phone_number2","phone_number3","mobile_phone1","other_phone1",
     "personal_email1","company","linkedin_profile_url","company_domain",
     "company_industry","company_subindustry","company_size","company_size_range",
@@ -370,11 +371,25 @@ async def upload_csv(file: UploadFile = File(...)):
                 clean[key] = str(val).split(".")[0] if "." in str(val) else str(val)
             else:
                 clean[key] = val
-        if clean.get("full_name") or clean.get("email"):
+        if clean.get("full_name") or clean.get("first_name") or clean.get("email"):
             rows.append(clean)
 
+    # Normalize Wiza column variants
+    for row in rows:
+        # Merge first_name + last_name → full_name
+        if not row.get("full_name") and (row.get("first_name") or row.get("last_name")):
+            row["full_name"] = f"{row.get('first_name', '')} {row.get('last_name', '')}".strip()
+        # location → locality + region
+        if not row.get("locality") and row.get("location"):
+            parts = row["location"].split(",", 1)
+            row["locality"] = parts[0].strip() if parts else row["location"]
+            row["region"] = parts[1].strip() if len(parts) > 1 else None
+        # Clean out non-DB columns before insert
+        for extra in ("first_name", "last_name", "location"):
+            row.pop(extra, None)
+
     if not rows:
-        raise HTTPException(400, "No valid rows found in CSV")
+        raise HTTPException(400, "No valid rows found")
 
     # Create import batch
     async with httpx.AsyncClient(timeout=30) as client:
