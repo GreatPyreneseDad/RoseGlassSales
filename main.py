@@ -355,41 +355,76 @@ async def upload_csv(file: UploadFile = File(...)):
 # ─── Scout ────────────────────────────────────────────────
 
 @app.post("/api/scout/run")
-async def run_scouts(limit: int = 20):
+async def run_scouts(limit: int = 20, tier: Optional[str] = None, rescout: bool = False):
+    """Scout leads for buying signals.
+    - Default: scouts unscouted leads (buying_signals IS NULL)
+    - tier=warm: scouts all warm-tier leads
+    - rescout=true: re-scouts even if they already have signals
+    """
     async with httpx.AsyncClient(timeout=30) as client:
         run_resp = await client.post(f"{SUPABASE_URL}/rest/v1/scout_runs", headers=HEADERS_SB,
-                                     json={"run_type": "manual", "status": "running"})
+                                     json={"run_type": f"manual_tier={tier or 'unscouted'}", "status": "running"})
         run_resp.raise_for_status()
         run_id = run_resp.json()[0]["id"]
 
-        leads_resp = await client.get(
-            f"{SUPABASE_URL}/rest/v1/leads?buying_signals=is.null&limit={limit}&order=created_at.asc",
-            headers=HEADERS_SB)
+        # Build query based on filters
+        url = f"{SUPABASE_URL}/rest/v1/leads?limit={limit}&order=rank_score.desc.nullslast"
+        if tier:
+            url += f"&qualification_tier=eq.{tier}"
+        if not rescout and not tier:
+            url += "&buying_signals=is.null"
+
+        leads_resp = await client.get(url, headers=HEADERS_SB)
         leads_resp.raise_for_status()
         leads = leads_resp.json()
 
     if not leads:
-        return {"run_id": run_id, "scouted": 0, "message": "No unscouted leads"}
+        return {"run_id": run_id, "scouted": 0, "message": f"No leads to scout (tier={tier}, rescout={rescout})"}
 
     updated = 0
+    errors = []
     for i in range(0, len(leads), 5):
         batch = leads[i:i+5]
         results = await asyncio.gather(*[ScoutAgent.scout_lead(l) for l in batch], return_exceptions=True)
         async with httpx.AsyncClient(timeout=30) as client:
             for lead, result in zip(batch, results):
-                if isinstance(result, Exception): continue
+                if isinstance(result, Exception):
+                    errors.append(f"{lead.get('full_name','?')}: {str(result)[:100]}")
+                    continue
                 now = datetime.now(timezone.utc).isoformat()
                 await client.patch(f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead['id']}", headers=HEADERS_SB,
                     json={**result, "buying_signals_updated_at": now,
                           "web_signals_updated_at": now, "linkedin_summary_updated_at": now, "updated_at": now})
                 updated += 1
 
+    # Auto-rank scouted leads
+    ranked = 0
+    async with httpx.AsyncClient(timeout=30) as client:
+        for lead in leads[:updated]:
+            lead_resp = await client.get(
+                f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead['id']}&select=id,buying_signals,web_signals,linkedin_summary,title,company_industry,company_size,company_description",
+                headers=HEADERS_SB)
+            if lead_resp.status_code == 200 and lead_resp.json():
+                ld = lead_resp.json()[0]
+                analysis = CERATABridge.analyze(
+                    buying_signals=ld.get("buying_signals",""), web_signals=ld.get("web_signals",""),
+                    linkedin_summary=ld.get("linkedin_summary",""), title=ld.get("title",""),
+                    company_industry=ld.get("company_industry",""),
+                    company_size=ld.get("company_size") or 0,
+                    company_description=ld.get("company_description",""))
+                now = datetime.now(timezone.utc).isoformat()
+                await client.patch(f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead['id']}", headers=HEADERS_SB,
+                    json={**analysis, "ranked_at": now, "updated_at": now})
+                ranked += 1
+
+    # Update run record
     async with httpx.AsyncClient(timeout=30) as client:
         await client.patch(f"{SUPABASE_URL}/rest/v1/scout_runs?id=eq.{run_id}", headers=HEADERS_SB,
             json={"status": "complete", "completed_at": datetime.now(timezone.utc).isoformat(),
-                  "leads_scouted": len(leads), "leads_updated": updated})
+                  "leads_scouted": len(leads), "leads_updated": updated,
+                  "errors": "; ".join(errors[:10]) if errors else None})
 
-    return {"run_id": run_id, "scouted": len(leads), "updated": updated}
+    return {"run_id": run_id, "scouted": len(leads), "updated": updated, "ranked": ranked, "errors": len(errors)}
 
 # ─── Rank ─────────────────────────────────────────────────
 

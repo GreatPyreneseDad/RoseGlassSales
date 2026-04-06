@@ -292,6 +292,7 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [scouting, setScouting] = useState(false);
   const [ranking, setRanking] = useState(false);
+  const [scoutingWarm, setScoutingWarm] = useState(false);
   const [filter, setFilter] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -339,6 +340,16 @@ export default function Home() {
     setRanking(false);
   };
 
+  const scoutWarm = async () => {
+    setScoutingWarm(true);
+    try {
+      const d = await (await api('/scout/run?tier=warm&limit=50', { method: 'POST' })).json();
+      setMsgs(p => [...p, { role: 'assistant', content: `Scouted ${d.updated} warm leads, auto-ranked ${d.ranked}. ${d.errors ? d.errors + ' errors.' : ''} Check the Leads tab for updated tiers.` }]);
+      load();
+    } catch { setMsgs(p => [...p, { role: 'assistant', content: 'Warm scout run failed.' }]); }
+    setScoutingWarm(false);
+  };
+
   const toggleFilter = (t: string) => { const next = filter === t ? null : t; setFilter(next); fetchLeads(next); };
 
   return (
@@ -373,6 +384,7 @@ export default function Home() {
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
           <ActionBtn label={scouting ? 'Scouting…' : 'Scout 10'} color="#8b5cf6" disabled={scouting} onClick={scout} />
+          <ActionBtn label={scoutingWarm ? 'Scouting…' : 'Scout Warm'} color="#f59e0b" disabled={scoutingWarm} onClick={scoutWarm} />
           <ActionBtn label={ranking ? 'Ranking…' : 'Rank All'} color="#06b6d4" disabled={ranking} onClick={rank} />
         </div>
       </header>
