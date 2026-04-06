@@ -214,10 +214,33 @@ class CERATABridge:
 # SCOUT AGENT
 # ═══════════════════════════════════════════════════════════
 
+SCOUT_MODEL = os.environ.get("SCOUT_MODEL", "claude-opus-4-20250514")
+
 class ScoutAgent:
-    SYSTEM = """You are a sales intelligence scout for behavioral health / addiction recovery.
-Given a lead, search the web for BUYING SIGNALS: growth, pain points, tech adoption, regulatory pressure,
-leadership changes, funding, job postings, news. Return plain text. Be specific with dates.
+    SYSTEM = """You are an elite sales intelligence scout for the behavioral health and addiction recovery industry.
+
+Your mission: Given a lead, search the web thoroughly for BUYING SIGNALS that indicate this person or company
+may need CRM, patient engagement, marketing automation, or business development tools.
+
+SEARCH STRATEGY:
+1. Search the company name + domain for recent news, press releases, expansions
+2. Search the person's name + company for leadership activity, speaking, hiring
+3. Search for the company's job postings (Indeed, LinkedIn) — hiring = growth
+4. Search for regulatory/compliance changes in their state
+5. Search for funding, investment, or acquisition activity
+
+SIGNAL CATEGORIES (be specific with dates and sources):
+- GROWTH: New locations, hiring, service expansion, new programs
+- PAIN POINTS: Low census, staff turnover, marketing challenges, tech complaints
+- TECHNOLOGY: Current tech stack, recent implementations, RFPs
+- REGULATORY: Accreditation deadlines (JCAHO, CARF), state compliance changes
+- FINANCIAL: Funding rounds, grants, revenue indicators, insurance contract changes
+- COMPETITIVE: Market changes, new competitors, consolidation in their area
+- LEADERSHIP: New hires in BD/marketing/ops roles, board changes
+- DIGITAL PRESENCE: Website recency, social media activity, content marketing
+
+OUTPUT FORMAT: Plain text paragraphs organized by signal category.
+Include dates, sources, and confidence level for each signal.
 If nothing found, say "No significant buying signals detected" — do NOT fabricate."""
 
     @classmethod
@@ -227,11 +250,26 @@ If nothing found, say "No significant buying signals detected" — do NOT fabric
         title = lead.get("title", "")
         linkedin = lead.get("linkedin_profile_url") or lead.get("linkedin", "")
         domain = lead.get("company_domain") or lead.get("domain", "")
+        industry = lead.get("company_industry", "")
+        region = lead.get("region", "")
+        description = lead.get("company_description", "")
 
-        prompt = f"Research buying signals for: {name}, {title} at {company} (domain: {domain}, LinkedIn: {linkedin})"
+        prompt = f"""Research buying signals for this lead:
+
+Name: {name}
+Title: {title}
+Company: {company}
+Industry: {industry}
+Region: {region}
+Domain: {domain}
+LinkedIn: {linkedin}
+Company description: {description[:200] if description else 'N/A'}
+
+Search for: recent news about {company}, job postings at {company}, {name} professional activity,
+regulatory changes in {region} behavioral health, and any growth/pain/funding signals."""
 
         try:
-            async with httpx.AsyncClient(timeout=60) as client:
+            async with httpx.AsyncClient(timeout=90) as client:
                 resp = await client.post(
                     "https://api.anthropic.com/v1/messages",
                     headers={
@@ -240,8 +278,8 @@ If nothing found, say "No significant buying signals detected" — do NOT fabric
                         "Content-Type": "application/json",
                     },
                     json={
-                        "model": "claude-sonnet-4-20250514",
-                        "max_tokens": 1024,
+                        "model": SCOUT_MODEL,
+                        "max_tokens": 2048,
                         "system": cls.SYSTEM,
                         "tools": [{"type": "web_search_20250305", "name": "web_search"}],
                         "messages": [{"role": "user", "content": prompt}],
@@ -253,7 +291,7 @@ If nothing found, say "No significant buying signals detected" — do NOT fabric
             texts = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
             return {
                 "buying_signals": "\n".join(texts) or "No signals found",
-                "web_signals": f"Scouted {datetime.now(timezone.utc).isoformat()}",
+                "web_signals": f"Scouted by {SCOUT_MODEL} at {datetime.now(timezone.utc).isoformat()}",
                 "linkedin_summary": f"LinkedIn: {linkedin}" if linkedin else "",
             }
         except Exception as e:
@@ -268,6 +306,82 @@ If nothing found, say "No significant buying signals detected" — do NOT fabric
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "rose-glass-sales"}
+
+# ─── Background Scout Worker ──────────────────────────────
+
+@app.post("/api/worker/scout")
+async def worker_scout(batch_size: int = 10):
+    """Background worker: scouts unscouted leads, then auto-ranks.
+    Called by Railway cron at 6am and 2pm, or manually.
+    Processes batch_size leads per invocation."""
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        # Get unscouted leads, prioritized by rank_score (warm leads first)
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/leads?buying_signals=is.null&order=rank_score.desc.nullslast&limit={batch_size}",
+            headers=HEADERS_SB)
+        resp.raise_for_status()
+        leads = resp.json()
+
+    if not leads:
+        return {"message": "All leads scouted", "remaining": 0}
+
+    # Count remaining
+    async with httpx.AsyncClient(timeout=30) as client:
+        count_resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/leads?buying_signals=is.null&select=id",
+            headers={**HEADERS_SB, "Prefer": "count=exact", "Range-Unit": "items", "Range": "0-0"})
+        remaining = int(count_resp.headers.get("content-range", "0/0").split("/")[-1])
+
+    # Scout one at a time (sequential to avoid rate limits)
+    scouted = 0
+    ranked = 0
+    for lead in leads:
+        try:
+            signals = await ScoutAgent.scout_lead(lead)
+            now = datetime.now(timezone.utc).isoformat()
+
+            async with httpx.AsyncClient(timeout=30) as client:
+                # Write scout signals
+                await client.patch(
+                    f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead['id']}",
+                    headers=HEADERS_SB,
+                    json={**signals, "buying_signals_updated_at": now,
+                          "web_signals_updated_at": now, "updated_at": now})
+
+                # Auto-rank with fresh data
+                lead_resp = await client.get(
+                    f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead['id']}&select=id,buying_signals,web_signals,linkedin_summary,title,company_industry,company_size,company_description",
+                    headers=HEADERS_SB)
+                if lead_resp.status_code == 200 and lead_resp.json():
+                    ld = lead_resp.json()[0]
+                    analysis = CERATABridge.analyze(
+                        buying_signals=ld.get("buying_signals",""),
+                        web_signals=ld.get("web_signals",""),
+                        linkedin_summary=ld.get("linkedin_summary",""),
+                        title=ld.get("title",""),
+                        company_industry=ld.get("company_industry",""),
+                        company_size=ld.get("company_size") or 0,
+                        company_description=ld.get("company_description",""))
+                    await client.patch(
+                        f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead['id']}",
+                        headers=HEADERS_SB,
+                        json={**analysis, "ranked_at": now, "updated_at": now})
+                    ranked += 1
+
+            scouted += 1
+            logger.info(f"Scouted [{scouted}/{len(leads)}]: {lead.get('full_name','')} at {lead.get('company','')}")
+
+        except Exception as e:
+            logger.error(f"Worker scout failed for {lead.get('full_name','')}: {e}")
+            continue
+
+    return {
+        "scouted": scouted,
+        "ranked": ranked,
+        "remaining": remaining - scouted,
+        "model": SCOUT_MODEL,
+    }
 
 # ─── CSV Upload ────────────────────────────────────────
 
