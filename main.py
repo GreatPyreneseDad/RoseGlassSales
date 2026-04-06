@@ -12,13 +12,15 @@ ROSE Corp / MacGregor Holding Company
 
 import os
 import json
+import csv
+import io
 import math
 import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
@@ -266,6 +268,89 @@ If nothing found, say "No significant buying signals detected" — do NOT fabric
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "rose-glass-sales"}
+
+# ─── CSV Upload ────────────────────────────────────────
+
+WIZA_COLUMNS = [
+    "email","full_name","title","locality","region","linkedin","domain",
+    "phone_number1","phone_number2","phone_number3","mobile_phone1","other_phone1",
+    "personal_email1","company","linkedin_profile_url","company_domain",
+    "company_industry","company_subindustry","company_size","company_size_range",
+    "company_founded","company_revenue","company_funding","company_type",
+    "company_linkedin","company_twitter","company_facebook","company_description",
+    "company_last_funding_round","company_last_funding_amount","company_last_funding_at",
+    "company_location","company_street","company_locality","company_region",
+    "company_country","company_postal_code","other_work_emails","profile_url",
+]
+
+INT_FIELDS = {"company_size", "company_founded"}
+STR_FIELDS = {"phone_number1","phone_number2","phone_number3","mobile_phone1","other_phone1","company_postal_code"}
+
+@app.post("/api/upload-csv")
+async def upload_csv(file: UploadFile = File(...)):
+    """Upload a Wiza-format CSV and insert rows into leads table."""
+    if not file.filename.endswith((".csv", ".CSV")):
+        raise HTTPException(400, "Only .csv files accepted")
+
+    raw = await file.read()
+    text = raw.decode("utf-8-sig", errors="replace")
+    reader = csv.DictReader(io.StringIO(text))
+
+    # Validate columns
+    headers = [h.strip().lower().replace(" ", "_") for h in (reader.fieldnames or [])]
+    matched = [h for h in headers if h in WIZA_COLUMNS]
+    if len(matched) < 5:
+        raise HTTPException(400, f"CSV doesn't match Wiza format. Found columns: {headers[:10]}")
+
+    rows = []
+    for row in reader:
+        clean = {}
+        for k, v in row.items():
+            key = k.strip().lower().replace(" ", "_")
+            if key not in WIZA_COLUMNS:
+                continue
+            val = (v or "").strip()
+            if not val or val.lower() == "none":
+                clean[key] = None
+            elif key in INT_FIELDS:
+                try: clean[key] = int(float(val))
+                except: clean[key] = None
+            elif key in STR_FIELDS:
+                clean[key] = str(val).split(".")[0] if "." in str(val) else str(val)
+            else:
+                clean[key] = val
+        if clean.get("full_name") or clean.get("email"):
+            rows.append(clean)
+
+    if not rows:
+        raise HTTPException(400, "No valid rows found in CSV")
+
+    # Create import batch
+    async with httpx.AsyncClient(timeout=30) as client:
+        batch_resp = await client.post(f"{SUPABASE_URL}/rest/v1/import_batches", headers=HEADERS_SB,
+            json={"filename": file.filename, "row_count": len(rows), "status": "processing"})
+        batch_resp.raise_for_status()
+        batch_id = batch_resp.json()[0]["id"]
+
+        inserted = 0
+        dupes = 0
+        for i in range(0, len(rows), 50):
+            chunk = rows[i:i+50]
+            for r in chunk:
+                r["import_batch_id"] = batch_id
+            resp = await client.post(
+                f"{SUPABASE_URL}/rest/v1/leads",
+                headers={**HEADERS_SB, "Prefer": "return=representation,resolution=merge-duplicates"},
+                json=chunk)
+            if resp.status_code < 300:
+                inserted += len(chunk)
+            else:
+                logger.warning(f"Insert chunk failed: {resp.text[:200]}")
+
+        await client.patch(f"{SUPABASE_URL}/rest/v1/import_batches?id=eq.{batch_id}", headers=HEADERS_SB,
+            json={"status": "complete", "row_count": inserted})
+
+    return {"batch_id": batch_id, "filename": file.filename, "rows_parsed": len(rows), "inserted": inserted}
 
 # ─── Scout ────────────────────────────────────────────────
 

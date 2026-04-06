@@ -6,6 +6,10 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 const api = (path: string, opts?: RequestInit) => fetch(`/api${path}`, opts);
 const apiJson = (path: string, body: any) =>
   api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+const apiUpload = (path: string, file: File) => {
+  const fd = new FormData(); fd.append('file', file);
+  return fetch(`/api${path}`, { method: 'POST', body: fd });
+};
 
 // ─── Types ───────────────────────────────────────────────
 interface Lead {
@@ -229,6 +233,52 @@ function StatsBar({ stats }: { stats: Stats | null }) {
   );
 }
 
+// ─── CSV Drop Zone ───────────────────────────────────
+function CsvDropZone({ onUploaded }: { onUploaded: (msg: string) => void }) {
+  const [dragging, setDragging] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = async (file: File) => {
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      onUploaded('Only .csv files are supported. Export from Wiza as CSV.');
+      return;
+    }
+    setUploading(true);
+    try {
+      const r = await apiUpload('/upload-csv', file);
+      const d = await r.json();
+      if (r.ok) {
+        onUploaded(`Imported ${d.inserted} leads from ${d.filename}. Run "Rank All" to score them.`);
+      } else {
+        onUploaded(`Import failed: ${d.detail || 'Unknown error'}`);
+      }
+    } catch { onUploaded('Upload failed — check connection.'); }
+    setUploading(false);
+  };
+
+  const onDrop = (e: React.DragEvent) => { e.preventDefault(); setDragging(false); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); };
+  const onDragOver = (e: React.DragEvent) => { e.preventDefault(); setDragging(true); };
+
+  return (
+    <div
+      onDrop={onDrop} onDragOver={onDragOver} onDragLeave={() => setDragging(false)}
+      onClick={() => fileRef.current?.click()}
+      style={{
+        margin: '12px 20px', padding: '18px', borderRadius: 10,
+        border: `2px dashed ${dragging ? '#8b5cf6' : '#1e293b'}`,
+        background: dragging ? '#8b5cf608' : '#0a0f1a',
+        cursor: 'pointer', textAlign: 'center', transition: 'all 0.2s',
+      }}>
+      <input ref={fileRef} type="file" accept=".csv" hidden onChange={e => { if (e.target.files?.[0]) handleFile(e.target.files[0]); e.target.value = ''; }} />
+      {uploading
+        ? <span style={{ color: '#8b5cf6', fontSize: 13 }}>Uploading...</span>
+        : <span style={{ color: '#64748b', fontSize: 13 }}>Drop a Wiza CSV here or <span style={{ color: '#8b5cf6', textDecoration: 'underline' }}>click to browse</span></span>
+      }
+    </div>
+  );
+}
+
 // ─── Main ────────────────────────────────────────────────
 export default function Home() {
   const [view, setView] = useState<'chat' | 'leads'>('chat');
@@ -355,6 +405,7 @@ export default function Home() {
             <div ref={endRef} />
           </div>
 
+          <CsvDropZone onUploaded={(msg) => { setMsgs(p => [...p, { role: 'assistant', content: msg }]); load(); }} />
           <div style={{ padding: '10px 20px 16px', borderTop: '1px solid #111827' }}>
             <div style={{ display: 'flex', gap: 6 }}>
               <input value={input} onChange={e => setInput(e.target.value)}
