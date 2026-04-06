@@ -458,8 +458,14 @@ export default function Home() {
   useEffect(() => {
     const t = localStorage.getItem('rgs_token');
     if (t) {
-      api('/auth/me').then(r => r.ok ? r.json() : Promise.reject()).then(u => { setUser(u); setAuthed(true); load(); }).catch(() => { localStorage.removeItem('rgs_token'); });
+      api('/auth/me').then(r => r.ok ? r.json() : Promise.reject())
+        .then(u => { setUser(u); setAuthed(true); load(); })
+        .catch(() => { localStorage.removeItem('rgs_token'); });
     }
+    // Check if auth endpoints exist — if not, skip login (backend still deploying)
+    fetch('/api/auth/me').then(r => {
+      if (r.status === 404 || r.status === 405) { setAuthed(true); load(); }
+    }).catch(() => {});
   }, []);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs]);
 
