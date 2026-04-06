@@ -215,7 +215,7 @@ class CERATABridge:
 # SCOUT AGENT
 # ═══════════════════════════════════════════════════════════
 
-SCOUT_MODEL = os.environ.get("SCOUT_MODEL", "claude-opus-4-20250514")
+SCOUT_MODEL = os.environ.get("SCOUT_MODEL", "claude-sonnet-4-20250514")  # Sonnet for bulk, set SCOUT_MODEL=claude-opus-4-20250514 for high-value re-scouts
 
 class ScoutAgent:
     SYSTEM = """You are an elite sales intelligence scout for the behavioral health and addiction recovery industry.
