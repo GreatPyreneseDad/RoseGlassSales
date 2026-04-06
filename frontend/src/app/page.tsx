@@ -2,13 +2,19 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-// API calls go through Next.js rewrites → /api/* → Railway backend
-const api = (path: string, opts?: RequestInit) => fetch(`/api${path}`, opts);
+// API calls with auth token
+const getToken = () => typeof window !== 'undefined' ? localStorage.getItem('rgs_token') : null;
+const authHeaders = (): Record<string, string> => {
+  const t = getToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+};
+const api = (path: string, opts?: RequestInit) =>
+  fetch(`/api${path}`, { ...opts, headers: { ...authHeaders(), ...opts?.headers } });
 const apiJson = (path: string, body: any) =>
   api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 const apiUpload = (path: string, file: File) => {
   const fd = new FormData(); fd.append('file', file);
-  return fetch(`/api${path}`, { method: 'POST', body: fd });
+  return fetch(`/api${path}`, { method: 'POST', body: fd, headers: authHeaders() });
 };
 
 // ─── Types ───────────────────────────────────────────────
@@ -279,8 +285,161 @@ function CsvDropZone({ onUploaded }: { onUploaded: (msg: string) => void }) {
   );
 }
 
+// ─── Login Screen ────────────────────────────────────
+function LoginScreen({ onLogin }: { onLogin: (user: any) => void }) {
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [companyName, setCompanyName] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const submit = async () => {
+    setError(''); setLoading(true);
+    try {
+      const endpoint = mode === 'login' ? '/auth/login' : '/auth/register';
+      const body = mode === 'login'
+        ? { username, password }
+        : { username, password, display_name: displayName, company_name: companyName };
+      const r = await fetch(`/api${endpoint}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const d = await r.json();
+      if (!r.ok) { setError(d.detail || 'Failed'); setLoading(false); return; }
+      localStorage.setItem('rgs_token', d.token);
+      onLogin(d.user || { username });
+    } catch { setError('Connection error'); }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#020617', fontFamily: "'DM Sans', sans-serif" }}>
+      <div style={{ width: 360, padding: 32, background: '#0a0f1a', borderRadius: 16, border: '1px solid #1e293b' }}>
+        <div style={{ textAlign: 'center', marginBottom: 24 }}>
+          <div style={{ width: 48, height: 48, borderRadius: 12, background: 'linear-gradient(135deg, #7c3aed, #ec4899)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontWeight: 800, color: '#fff', marginBottom: 12 }}>◈</div>
+          <h1 style={{ margin: 0, fontSize: 20, color: '#f1f5f9', fontWeight: 700 }}>Rose Glass Sales</h1>
+          <p style={{ margin: '4px 0 0', fontSize: 11, color: '#475569', letterSpacing: 1.5, textTransform: 'uppercase' }}>CERATA Intelligence</p>
+        </div>
+
+        <div style={{ display: 'flex', gap: 2, background: '#0f172a', borderRadius: 8, padding: 2, marginBottom: 20 }}>
+          {(['login', 'register'] as const).map(m => (
+            <button key={m} onClick={() => setMode(m)} style={{
+              flex: 1, padding: '7px 0', borderRadius: 6, border: 'none', cursor: 'pointer',
+              fontSize: 12, fontWeight: 500, background: mode === m ? '#1e293b' : 'transparent',
+              color: mode === m ? '#f1f5f9' : '#64748b',
+            }}>{m === 'login' ? 'Sign In' : 'Create Account'}</button>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <input value={username} onChange={e => setUsername(e.target.value)} placeholder="Username"
+            onKeyDown={e => e.key === 'Enter' && submit()}
+            style={inputStyle} />
+          <input value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" type="password"
+            onKeyDown={e => e.key === 'Enter' && submit()}
+            style={inputStyle} />
+          {mode === 'register' && <>
+            <input value={displayName} onChange={e => setDisplayName(e.target.value)} placeholder="Your name" style={inputStyle} />
+            <input value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="Company name" style={inputStyle} />
+          </>}
+          {error && <div style={{ color: '#ef4444', fontSize: 12, padding: '4px 0' }}>{error}</div>}
+          <button onClick={submit} disabled={loading} style={{
+            padding: '10px 0', borderRadius: 8, border: 'none',
+            background: loading ? '#334155' : 'linear-gradient(135deg, #7c3aed, #ec4899)',
+            color: '#fff', fontWeight: 600, cursor: loading ? 'default' : 'pointer', fontSize: 14,
+          }}>{loading ? 'Loading...' : mode === 'login' ? 'Sign In' : 'Create Account'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const inputStyle: React.CSSProperties = {
+  padding: '10px 12px', borderRadius: 8, border: '1px solid #1e293b',
+  background: '#020617', color: '#f1f5f9', fontSize: 13, outline: 'none',
+};
+
+// ─── Settings Panel ──────────────────────────────────────
+function SettingsPanel({ user, onClose, onLogout }: { user: any; onClose: () => void; onLogout: () => void }) {
+  const [displayName, setDisplayName] = useState(user?.display_name || '');
+  const [email, setEmail] = useState(user?.email || '');
+  const [phone, setPhone] = useState(user?.phone || '');
+  const [companyName, setCompanyName] = useState(user?.company_name || '');
+  const [newUsername, setNewUsername] = useState('');
+  const [currentPw, setCurrentPw] = useState('');
+  const [newPw, setNewPw] = useState('');
+  const [msg, setMsg] = useState('');
+
+  const saveProfile = async () => {
+    const r = await api('/auth/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ display_name: displayName, email, phone, company_name: companyName }) });
+    setMsg(r.ok ? 'Profile updated' : 'Failed');
+  };
+
+  const changePw = async () => {
+    if (!currentPw || !newPw) return;
+    const r = await apiJson('/auth/change-password', { current_password: currentPw, new_password: newPw });
+    setMsg(r.ok ? 'Password changed' : 'Failed — check current password');
+    setCurrentPw(''); setNewPw('');
+  };
+
+  const changeUser = async () => {
+    if (!newUsername || !currentPw) return;
+    const r = await apiJson('/auth/change-username', { new_username: newUsername, password: currentPw });
+    setMsg(r.ok ? 'Username changed' : 'Failed');
+    setNewUsername(''); setCurrentPw('');
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}>
+      <div style={{ width: 420, maxHeight: '80vh', overflowY: 'auto', background: '#0a0f1a', borderRadius: 16, border: '1px solid #1e293b', padding: 24 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <h2 style={{ margin: 0, fontSize: 18, color: '#f1f5f9' }}>Settings</h2>
+          <button onClick={onClose} style={{ background: '#1e293b', border: 'none', color: '#94a3b8', width: 28, height: 28, borderRadius: 6, cursor: 'pointer', fontSize: 14 }}>✕</button>
+        </div>
+
+        <Section label="Profile">
+          <input value={displayName} onChange={e => setDisplayName(e.target.value)} placeholder="Display name" style={inputStyle} />
+          <input value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" style={{...inputStyle, marginTop: 8}} />
+          <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="Phone" style={{...inputStyle, marginTop: 8}} />
+          <input value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="Company name" style={{...inputStyle, marginTop: 8}} />
+          <button onClick={saveProfile} style={{...btnStyle, marginTop: 10}}>Save Profile</button>
+        </Section>
+
+        <Section label="Change Username">
+          <input value={newUsername} onChange={e => setNewUsername(e.target.value)} placeholder="New username" style={inputStyle} />
+          <input value={currentPw} onChange={e => setCurrentPw(e.target.value)} placeholder="Current password to confirm" type="password" style={{...inputStyle, marginTop: 8}} />
+          <button onClick={changeUser} style={{...btnStyle, marginTop: 10}}>Change Username</button>
+        </Section>
+
+        <Section label="Change Password">
+          <input value={currentPw} onChange={e => setCurrentPw(e.target.value)} placeholder="Current password" type="password" style={inputStyle} />
+          <input value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="New password" type="password" style={{...inputStyle, marginTop: 8}} />
+          <button onClick={changePw} style={{...btnStyle, marginTop: 10}}>Change Password</button>
+        </Section>
+
+        {msg && <div style={{ color: '#8b5cf6', fontSize: 12, padding: '8px 0', textAlign: 'center' }}>{msg}</div>}
+
+        <div style={{ borderTop: '1px solid #1e293b', marginTop: 16, paddingTop: 16 }}>
+          <button onClick={onLogout} style={{ ...btnStyle, background: '#1e293b', color: '#ef4444', border: '1px solid #ef444433' }}>Sign Out</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const btnStyle: React.CSSProperties = {
+  width: '100%', padding: '8px 0', borderRadius: 8, border: 'none',
+  background: '#7c3aed22', color: '#a78bfa', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+};
+
 // ─── Main ────────────────────────────────────────────────
 export default function Home() {
+  const [authed, setAuthed] = useState(false);
+  const [user, setUser] = useState<any>(null);
+  const [showSettings, setShowSettings] = useState(false);
   const [view, setView] = useState<'chat' | 'leads'>('chat');
   const [leads, setLeads] = useState<Lead[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -296,8 +455,16 @@ export default function Home() {
   const [filter, setFilter] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const t = localStorage.getItem('rgs_token');
+    if (t) {
+      api('/auth/me').then(r => r.ok ? r.json() : Promise.reject()).then(u => { setUser(u); setAuthed(true); load(); }).catch(() => { localStorage.removeItem('rgs_token'); });
+    }
+  }, []);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs]);
+
+  const handleLogin = (u: any) => { setUser(u); setAuthed(true); load(); };
+  const handleLogout = () => { api('/auth/logout', { method: 'POST' }); localStorage.removeItem('rgs_token'); setAuthed(false); setUser(null); };
 
   const load = () => { api('/stats').then(r => r.json()).then(setStats).catch(() => {}); fetchLeads(); };
   const fetchLeads = (t?: string | null) => {
@@ -352,8 +519,11 @@ export default function Home() {
 
   const toggleFilter = (t: string) => { const next = filter === t ? null : t; setFilter(next); fetchLeads(next); };
 
+  if (!authed) return <LoginScreen onLogin={handleLogin} />;
+
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#020617', color: '#e2e8f0', fontFamily: "'DM Sans', -apple-system, sans-serif" }}>
+      {showSettings && <SettingsPanel user={user} onClose={() => setShowSettings(false)} onLogout={handleLogout} />}
 
       {/* ── Header ── */}
       <header style={{ display: 'flex', alignItems: 'center', padding: '10px 20px', borderBottom: '1px solid #111827', background: '#060a14' }}>
@@ -386,6 +556,10 @@ export default function Home() {
           <ActionBtn label={scouting ? 'Scouting…' : 'Scout 10'} color="#8b5cf6" disabled={scouting} onClick={scout} />
           <ActionBtn label={scoutingWarm ? 'Scouting…' : 'Scout Warm'} color="#f59e0b" disabled={scoutingWarm} onClick={scoutWarm} />
           <ActionBtn label={ranking ? 'Ranking…' : 'Rank All'} color="#06b6d4" disabled={ranking} onClick={rank} />
+          <button onClick={() => setShowSettings(true)} style={{
+            padding: '5px 10px', borderRadius: 6, border: '1px solid #1e293b',
+            background: 'transparent', color: '#64748b', fontSize: 14, cursor: 'pointer',
+          }} title="Settings">⚙</button>
         </div>
       </header>
 

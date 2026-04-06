@@ -17,10 +17,11 @@ import io
 import math
 import asyncio
 import logging
+import secrets
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
@@ -306,6 +307,173 @@ regulatory changes in {region} behavioral health, and any growth/pain/funding si
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "rose-glass-sales"}
+
+
+# ─── Auth ─────────────────────────────────────────────────
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    display_name: Optional[str] = None
+    company_name: Optional[str] = None
+    industry: Optional[str] = None
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class ProfileUpdate(BaseModel):
+    display_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    company_name: Optional[str] = None
+    industry: Optional[str] = None
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+class UsernameChange(BaseModel):
+    new_username: str
+    password: str
+
+
+async def get_current_user(authorization: str = Header(None)) -> Dict:
+    """Extract user from Bearer token."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Not authenticated")
+    token = authorization.replace("Bearer ", "")
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/sessions?token=eq.{token}&select=user_id,expires_at",
+            headers=HEADERS_SB)
+        sessions = resp.json()
+    if not sessions:
+        raise HTTPException(401, "Invalid session")
+    session = sessions[0]
+    if session["expires_at"] and session["expires_at"] < datetime.now(timezone.utc).isoformat():
+        raise HTTPException(401, "Session expired")
+    return {"user_id": session["user_id"]}
+
+
+@app.post("/api/auth/register")
+async def register(req: RegisterRequest):
+    if len(req.username) < 3:
+        raise HTTPException(400, "Username must be at least 3 characters")
+    if len(req.password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+    async with httpx.AsyncClient(timeout=15) as client:
+        # Check if username taken
+        check = await client.get(
+            f"{SUPABASE_URL}/rest/v1/users?username=eq.{req.username}&select=id",
+            headers=HEADERS_SB)
+        if check.json():
+            raise HTTPException(400, "Username already taken")
+        # Create user (hash password in SQL via pgcrypto)
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/rpc/create_user",
+            headers=HEADERS_SB,
+            json={"p_username": req.username, "p_password": req.password,
+                  "p_display_name": req.display_name, "p_company_name": req.company_name,
+                  "p_industry": req.industry})
+        if resp.status_code >= 400:
+            raise HTTPException(400, f"Registration failed: {resp.text[:200]}")
+        user_id = resp.json()
+    # Auto-login
+    token = secrets.token_urlsafe(48)
+    expires = (datetime.now(timezone.utc) + __import__("datetime").timedelta(days=30)).isoformat()
+    async with httpx.AsyncClient(timeout=15) as client:
+        await client.post(f"{SUPABASE_URL}/rest/v1/sessions", headers=HEADERS_SB,
+            json={"user_id": user_id, "token": token, "expires_at": expires})
+    return {"token": token, "user_id": user_id, "username": req.username}
+
+
+@app.post("/api/auth/login")
+async def login(req: LoginRequest):
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/rpc/verify_login",
+            headers=HEADERS_SB,
+            json={"p_username": req.username, "p_password": req.password})
+        if resp.status_code >= 400 or not resp.json():
+            raise HTTPException(401, "Invalid username or password")
+        user_id = resp.json()
+    token = secrets.token_urlsafe(48)
+    expires = (datetime.now(timezone.utc) + __import__("datetime").timedelta(days=30)).isoformat()
+    async with httpx.AsyncClient(timeout=15) as client:
+        await client.post(f"{SUPABASE_URL}/rest/v1/sessions", headers=HEADERS_SB,
+            json={"user_id": user_id, "token": token, "expires_at": expires})
+        # Get user profile
+        profile = await client.get(
+            f"{SUPABASE_URL}/rest/v1/users?id=eq.{user_id}&select=id,username,display_name,email,phone,company_name,industry,avatar_url",
+            headers=HEADERS_SB)
+    return {"token": token, "user": profile.json()[0] if profile.json() else {"id": user_id}}
+
+
+@app.get("/api/auth/me")
+async def get_me(authorization: str = Header(None)):
+    user = await get_current_user(authorization)
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/users?id=eq.{user['user_id']}&select=id,username,display_name,email,phone,company_name,industry,avatar_url,settings",
+            headers=HEADERS_SB)
+    if not resp.json():
+        raise HTTPException(404, "User not found")
+    return resp.json()[0]
+
+
+@app.patch("/api/auth/profile")
+async def update_profile(update: ProfileUpdate, authorization: str = Header(None)):
+    user = await get_current_user(authorization)
+    data = {k: v for k, v in update.dict().items() if v is not None}
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.patch(
+            f"{SUPABASE_URL}/rest/v1/users?id=eq.{user['user_id']}",
+            headers=HEADERS_SB, json=data)
+    return {"updated": True}
+
+
+@app.post("/api/auth/change-password")
+async def change_password(req: PasswordChange, authorization: str = Header(None)):
+    user = await get_current_user(authorization)
+    async with httpx.AsyncClient(timeout=15) as client:
+        verify = await client.post(f"{SUPABASE_URL}/rest/v1/rpc/verify_password",
+            headers=HEADERS_SB,
+            json={"p_user_id": user["user_id"], "p_password": req.current_password})
+        if not verify.json():
+            raise HTTPException(400, "Current password is incorrect")
+        await client.post(f"{SUPABASE_URL}/rest/v1/rpc/update_password",
+            headers=HEADERS_SB,
+            json={"p_user_id": user["user_id"], "p_new_password": req.new_password})
+    return {"updated": True}
+
+
+@app.post("/api/auth/change-username")
+async def change_username(req: UsernameChange, authorization: str = Header(None)):
+    user = await get_current_user(authorization)
+    async with httpx.AsyncClient(timeout=15) as client:
+        verify = await client.post(f"{SUPABASE_URL}/rest/v1/rpc/verify_password",
+            headers=HEADERS_SB,
+            json={"p_user_id": user["user_id"], "p_password": req.password})
+        if not verify.json():
+            raise HTTPException(400, "Password is incorrect")
+        resp = await client.patch(
+            f"{SUPABASE_URL}/rest/v1/users?id=eq.{user['user_id']}",
+            headers=HEADERS_SB, json={"username": req.new_username})
+        if resp.status_code >= 400:
+            raise HTTPException(400, "Username taken or invalid")
+    return {"updated": True, "username": req.new_username}
+
+
+@app.post("/api/auth/logout")
+async def logout(authorization: str = Header(None)):
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.replace("Bearer ", "")
+        async with httpx.AsyncClient(timeout=15) as client:
+            await client.delete(f"{SUPABASE_URL}/rest/v1/sessions?token=eq.{token}", headers=HEADERS_SB)
+    return {"logged_out": True}
+
 
 # ─── Background Scout Worker ──────────────────────────────
 
