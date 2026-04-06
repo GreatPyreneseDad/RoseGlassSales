@@ -288,22 +288,73 @@ STR_FIELDS = {"phone_number1","phone_number2","phone_number3","mobile_phone1","o
 
 @app.post("/api/upload-csv")
 async def upload_csv(file: UploadFile = File(...)):
-    """Upload a Wiza-format CSV and insert rows into leads table."""
-    if not file.filename.endswith((".csv", ".CSV")):
-        raise HTTPException(400, "Only .csv files accepted")
+    """Upload Wiza leads from CSV, XLSX, or Numbers files."""
+    fname = file.filename.lower()
+    allowed = (".csv", ".xlsx", ".xls", ".numbers")
+    if not any(fname.endswith(ext) for ext in allowed):
+        raise HTTPException(400, f"Accepted formats: CSV, XLSX, Numbers. Got: {file.filename}")
 
     raw = await file.read()
-    text = raw.decode("utf-8-sig", errors="replace")
-    reader = csv.DictReader(io.StringIO(text))
+
+    if fname.endswith(".numbers"):
+        import tempfile, subprocess
+        with tempfile.NamedTemporaryFile(suffix=".numbers", delete=False) as tmp:
+            tmp.write(raw)
+            tmp_path = tmp.name
+        try:
+            from numbers_parser import Document
+            doc = Document(tmp_path)
+            table = doc.sheets[0].tables[0]
+            headers_raw = [str(table.cell(0, c).value or f"col_{c}") for c in range(table.num_cols)]
+            data_rows = []
+            for r in range(1, table.num_rows):
+                row = {}
+                for c in range(table.num_cols):
+                    val = table.cell(r, c).value
+                    row[headers_raw[c]] = str(val) if val is not None else ""
+                data_rows.append(row)
+        except ImportError:
+            raise HTTPException(400, "Numbers format not supported on this server. Export as CSV from Numbers first.")
+        finally:
+            os.unlink(tmp_path)
+        reader_fieldnames = headers_raw
+        reader_rows = data_rows
+
+    elif fname.endswith((".xlsx", ".xls")):
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+            tmp.write(raw)
+            tmp_path = tmp.name
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(tmp_path, read_only=True)
+            ws = wb.active
+            rows_iter = ws.iter_rows(values_only=True)
+            headers_raw = [str(h or f"col_{i}") for i, h in enumerate(next(rows_iter))]
+            data_rows = []
+            for row in rows_iter:
+                data_rows.append({headers_raw[i]: str(v) if v is not None else "" for i, v in enumerate(row)})
+        except ImportError:
+            raise HTTPException(400, "XLSX format not supported on this server. Export as CSV first.")
+        finally:
+            os.unlink(tmp_path)
+        reader_fieldnames = headers_raw
+        reader_rows = data_rows
+
+    else:
+        text = raw.decode("utf-8-sig", errors="replace")
+        reader = csv.DictReader(io.StringIO(text))
+        reader_fieldnames = reader.fieldnames or []
+        reader_rows = list(reader)
 
     # Validate columns
-    headers = [h.strip().lower().replace(" ", "_") for h in (reader.fieldnames or [])]
+    headers = [h.strip().lower().replace(" ", "_") for h in reader_fieldnames]
     matched = [h for h in headers if h in WIZA_COLUMNS]
     if len(matched) < 5:
-        raise HTTPException(400, f"CSV doesn't match Wiza format. Found columns: {headers[:10]}")
+        raise HTTPException(400, f"File doesn't match Wiza format. Found columns: {headers[:10]}")
 
     rows = []
-    for row in reader:
+    for row in reader_rows:
         clean = {}
         for k, v in row.items():
             key = k.strip().lower().replace(" ", "_")

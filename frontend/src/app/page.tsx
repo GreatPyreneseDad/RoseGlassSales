@@ -240,8 +240,8 @@ function CsvDropZone({ onUploaded }: { onUploaded: (msg: string) => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleFile = async (file: File) => {
-    if (!file.name.toLowerCase().endsWith('.csv')) {
-      onUploaded('Only .csv files are supported. Export from Wiza as CSV.');
+    if (!/\.(csv|xlsx|xls|numbers)$/i.test(file.name)) {
+      onUploaded('Accepted formats: CSV, XLSX, or Numbers.');
       return;
     }
     setUploading(true);
@@ -270,10 +270,10 @@ function CsvDropZone({ onUploaded }: { onUploaded: (msg: string) => void }) {
         background: dragging ? '#8b5cf608' : '#0a0f1a',
         cursor: 'pointer', textAlign: 'center', transition: 'all 0.2s',
       }}>
-      <input ref={fileRef} type="file" accept=".csv" hidden onChange={e => { if (e.target.files?.[0]) handleFile(e.target.files[0]); e.target.value = ''; }} />
+      <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.numbers" hidden onChange={e => { if (e.target.files?.[0]) handleFile(e.target.files[0]); e.target.value = ''; }} />
       {uploading
         ? <span style={{ color: '#8b5cf6', fontSize: 13 }}>Uploading...</span>
-        : <span style={{ color: '#64748b', fontSize: 13 }}>Drop a Wiza CSV here or <span style={{ color: '#8b5cf6', textDecoration: 'underline' }}>click to browse</span></span>
+        : <span style={{ color: '#64748b', fontSize: 13 }}>Drop a Wiza file here (CSV, XLSX, Numbers) or <span style={{ color: '#8b5cf6', textDecoration: 'underline' }}>click to browse</span></span>
       }
     </div>
   );
