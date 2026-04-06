@@ -570,7 +570,8 @@ INT_FIELDS = {"company_size", "company_founded"}
 STR_FIELDS = {"phone_number1","phone_number2","phone_number3","mobile_phone1","other_phone1","company_postal_code"}
 
 @app.post("/api/upload-csv")
-async def upload_csv(file: UploadFile = File(...)):
+async def upload_csv(file: UploadFile = File(...), authorization: str = Header(None)):
+    user = await get_current_user(authorization)
     """Upload Wiza leads from CSV, XLSX, or Numbers files."""
     fname = file.filename.lower()
     allowed = (".csv", ".xlsx", ".xls", ".numbers")
@@ -676,7 +677,7 @@ async def upload_csv(file: UploadFile = File(...)):
     # Create import batch
     async with httpx.AsyncClient(timeout=30) as client:
         batch_resp = await client.post(f"{SUPABASE_URL}/rest/v1/import_batches", headers=HEADERS_SB,
-            json={"filename": file.filename, "row_count": len(rows), "status": "processing"})
+            json={"filename": file.filename, "row_count": len(rows), "status": "processing", "user_id": user["user_id"]})
         batch_resp.raise_for_status()
         batch_id = batch_resp.json()[0]["id"]
 
@@ -686,6 +687,7 @@ async def upload_csv(file: UploadFile = File(...)):
             chunk = rows[i:i+50]
             for r in chunk:
                 r["import_batch_id"] = batch_id
+                r["user_id"] = user["user_id"]
             resp = await client.post(
                 f"{SUPABASE_URL}/rest/v1/leads",
                 headers={**HEADERS_SB, "Prefer": "return=representation,resolution=merge-duplicates"},
@@ -703,7 +705,8 @@ async def upload_csv(file: UploadFile = File(...)):
 # ─── Scout ────────────────────────────────────────────────
 
 @app.post("/api/scout/run")
-async def run_scouts(limit: int = 20, tier: Optional[str] = None, rescout: bool = False):
+async def run_scouts(limit: int = 20, tier: Optional[str] = None, rescout: bool = False, authorization: str = Header(None)):
+    user = await get_current_user(authorization)
     """Scout leads for buying signals.
     - Default: scouts unscouted leads (buying_signals IS NULL)
     - tier=warm: scouts all warm-tier leads
@@ -716,7 +719,7 @@ async def run_scouts(limit: int = 20, tier: Optional[str] = None, rescout: bool 
         run_id = run_resp.json()[0]["id"]
 
         # Build query based on filters
-        url = f"{SUPABASE_URL}/rest/v1/leads?limit={limit}&order=rank_score.desc.nullslast"
+        url = f"{SUPABASE_URL}/rest/v1/leads?limit={limit}&order=rank_score.desc.nullslast&user_id=eq.{user['user_id']}"
         if tier:
             url += f"&qualification_tier=eq.{tier}"
         if not rescout and not tier:
@@ -777,7 +780,8 @@ async def run_scouts(limit: int = 20, tier: Optional[str] = None, rescout: bool 
 # ─── Rank ─────────────────────────────────────────────────
 
 @app.post("/api/rank/run")
-async def run_ranking():
+async def run_ranking(authorization: str = Header(None)):
+    user = await get_current_user(authorization)
     async with httpx.AsyncClient(timeout=30) as client:
         run_resp = await client.post(f"{SUPABASE_URL}/rest/v1/rank_runs", headers=HEADERS_SB,
                                      json={"status": "running"})
@@ -785,7 +789,7 @@ async def run_ranking():
         run_id = run_resp.json()[0]["id"]
 
         leads_resp = await client.get(
-            f"{SUPABASE_URL}/rest/v1/leads?buying_signals=not.is.null&select=id,buying_signals,web_signals,linkedin_summary,title,company_industry,company_size,company_description&limit=1000",
+            f"{SUPABASE_URL}/rest/v1/leads?buying_signals=not.is.null&user_id=eq.{user['user_id']}&select=id,buying_signals,web_signals,linkedin_summary,title,company_industry,company_size,company_description&limit=1000",
             headers=HEADERS_SB)
         leads_resp.raise_for_status()
         leads = leads_resp.json()
@@ -897,7 +901,7 @@ CHAT_TOOLS = [
 ]
 
 
-async def _exec_tool(name: str, inp: Dict) -> str:
+async def _exec_tool(name: str, inp: Dict, user_id: str = None) -> str:
     """Execute a chat tool and return result as string."""
     try:
         if name == "search_leads":
@@ -906,6 +910,7 @@ async def _exec_tool(name: str, inp: Dict) -> str:
             limit = inp.get("limit", 25)
             url = f"{SUPABASE_URL}/rest/v1/leads?order=rank_score.desc.nullslast&limit={limit}"
             url += "&select=id,full_name,title,company,company_industry,region,rank_score,coherence_score,qualification_tier,psi_intent,rho_authority,q_urgency,q_optimized,f_fit,dimensional_fractures,buying_signals,user_notes,user_status,outreach_status"
+            url += f"&user_id=eq.{user['user_id']}"
             if tier:
                 url += f"&qualification_tier=eq.{tier}"
             if query:
@@ -983,17 +988,18 @@ async def _exec_tool(name: str, inp: Dict) -> str:
 
 
 @app.post("/api/chat")
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, authorization: str = Header(None)):
+    user = await get_current_user(authorization)
     # Build context
     async with httpx.AsyncClient(timeout=30) as client:
-        stats_resp = await client.get(f"{SUPABASE_URL}/rest/v1/leads?select=qualification_tier&limit=1000", headers=HEADERS_SB)
+        stats_resp = await client.get(f"{SUPABASE_URL}/rest/v1/leads?select=qualification_tier&limit=1000&user_id=eq.{user['user_id']}", headers=HEADERS_SB)
         all_tiers = {}
         for l in stats_resp.json():
             t = l.get("qualification_tier") or "unscored"
             all_tiers[t] = all_tiers.get(t, 0) + 1
 
         top_resp = await client.get(
-            f"{SUPABASE_URL}/rest/v1/leads?order=rank_score.desc.nullslast&limit=25&select=id,full_name,title,company,region,rank_score,coherence_score,qualification_tier,psi_intent,rho_authority,q_optimized,f_fit,dimensional_fractures,buying_signals,user_notes,user_status",
+            f"{SUPABASE_URL}/rest/v1/leads?order=rank_score.desc.nullslast&limit=25&user_id=eq.{user['user_id']}&select=id,full_name,title,company,region,rank_score,coherence_score,qualification_tier,psi_intent,rho_authority,q_optimized,f_fit,dimensional_fractures,buying_signals,user_notes,user_status",
             headers=HEADERS_SB)
         top_leads = top_resp.json()
 
@@ -1023,7 +1029,7 @@ async def chat(req: ChatRequest):
         # Execute tools and add results
         tool_results = []
         for tu in tool_uses:
-            result = await _exec_tool(tu["name"], tu["input"])
+            result = await _exec_tool(tu["name"], tu["input"], user_id=user["user_id"])
             tool_results.append({
                 "type": "tool_result",
                 "tool_use_id": tu["id"],
@@ -1048,8 +1054,9 @@ async def chat(req: ChatRequest):
 # ─── Lead CRUD ────────────────────────────────────────────
 
 @app.get("/api/leads")
-async def get_leads(tier: Optional[str] = None, limit: int = 50, offset: int = 0):
-    url = f"{SUPABASE_URL}/rest/v1/leads?order=rank_score.desc.nullslast&limit={limit}&offset={offset}"
+async def get_leads(tier: Optional[str] = None, limit: int = 50, offset: int = 0, authorization: str = Header(None)):
+    user = await get_current_user(authorization)
+    url = f"{SUPABASE_URL}/rest/v1/leads?order=rank_score.desc.nullslast&limit={limit}&offset={offset}&user_id=eq.{user['user_id']}"
     if tier: url += f"&qualification_tier=eq.{tier}"
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(url, headers=HEADERS_SB)
@@ -1057,7 +1064,8 @@ async def get_leads(tier: Optional[str] = None, limit: int = 50, offset: int = 0
         return resp.json()
 
 @app.get("/api/leads/{lead_id}")
-async def get_lead(lead_id: str):
+async def get_lead(lead_id: str, authorization: str = Header(None)):
+    user = await get_current_user(authorization)
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead_id}", headers=HEADERS_SB)
         leads = resp.json()
@@ -1071,7 +1079,8 @@ class LeadUpdate(BaseModel):
     outreach_status: Optional[str] = None
 
 @app.patch("/api/leads/{lead_id}")
-async def update_lead(lead_id: str, update: LeadUpdate):
+async def update_lead(lead_id: str, update: LeadUpdate, authorization: str = Header(None)):
+    user = await get_current_user(authorization)
     data = {k: v for k, v in update.dict().items() if v is not None}
     data["updated_at"] = datetime.now(timezone.utc).isoformat()
     async with httpx.AsyncClient(timeout=30) as client:
@@ -1079,9 +1088,10 @@ async def update_lead(lead_id: str, update: LeadUpdate):
         return resp.json()
 
 @app.get("/api/stats")
-async def get_stats():
+async def get_stats(authorization: str = Header(None)):
+    user = await get_current_user(authorization)
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(f"{SUPABASE_URL}/rest/v1/leads?select=qualification_tier,coherence_score&limit=1000", headers=HEADERS_SB)
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/leads?select=qualification_tier,coherence_score&limit=1000&user_id=eq.{user['user_id']}", headers=HEADERS_SB)
         leads = resp.json()
     scored = [l for l in leads if l.get("coherence_score")]
     tiers = {}
