@@ -439,28 +439,169 @@ async def run_ranking():
 
     return {"run_id": run_id, "ranked": len(leads), "tier_counts": tiers}
 
-# ─── Chat ─────────────────────────────────────────────────
+# ─── Chat (Tool-Using Agent) ───────────────────────────
 
 class ChatRequest(BaseModel):
     message: str
     history: List[Dict[str, str]] = []
 
-CHAT_SYSTEM = """You are the Rose Glass Sales Intelligence Agent. You manage leads in the behavioral health / recovery industry.
+CHAT_SYSTEM = """You are the Rose Glass Sales Intelligence Agent. You have REAL tools to query and modify the leads database.
 
-Leads are analyzed via CERATA dimensional framework:
+IMPORTANT: When the user asks you to update a lead, scout a lead, or search for leads, you MUST use the tools provided. 
+Do NOT just describe what you would do — actually call the tools.
+
+Dimensions (CERATA framework):
 - Ψ (psi_intent): Intent coherence (0-1)
 - ρ (rho_authority): Decision authority (0-1)
 - q (q_optimized): Bio-optimized urgency (0-1)
 - f (f_fit): Ecosystem fit (0-1)
 - coherence_score: Overall signal (0-4)
 - qualification_tier: hot/warm/cold/disqualified
-- dimensional_fractures: Signal divergences
 
-When asked about leads, use the data provided. Explain WHY using dimensions, not just scores.
-When user gives feedback, note what should be updated. Be direct."""
+Be direct. Use dimensional analysis to explain reasoning."""
+
+CHAT_TOOLS = [
+    {
+        "name": "search_leads",
+        "description": "Search leads by name, company, tier, or region. Returns matching leads with all dimensional data.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Name, company, or keyword to search"},
+                "tier": {"type": "string", "description": "Filter by tier: hot, warm, cold, disqualified"},
+                "limit": {"type": "integer", "description": "Max results (default 25)"},
+            },
+        },
+    },
+    {
+        "name": "update_lead",
+        "description": "Update a lead's fields. Use this to write notes, change status, record outreach, or save buying signals.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "lead_id": {"type": "string", "description": "UUID of the lead to update"},
+                "buying_signals": {"type": "string", "description": "Buying signals text to write"},
+                "user_notes": {"type": "string", "description": "User notes to add"},
+                "user_status": {"type": "string", "description": "Status: new, contacted, qualified, nurture, dead"},
+                "user_rating": {"type": "integer", "description": "1-5 star rating"},
+                "outreach_status": {"type": "string", "description": "none, emailed, called, meeting_scheduled, proposal_sent"},
+            },
+            "required": ["lead_id"],
+        },
+    },
+    {
+        "name": "scout_lead",
+        "description": "Run a web search scout on a specific lead to find buying signals. Writes results directly to the database.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "lead_id": {"type": "string", "description": "UUID of the lead to scout"},
+            },
+            "required": ["lead_id"],
+        },
+    },
+    {
+        "name": "rank_lead",
+        "description": "Re-run CERATA dimensional analysis on a lead after new signals are added.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "lead_id": {"type": "string", "description": "UUID of the lead to re-rank"},
+            },
+            "required": ["lead_id"],
+        },
+    },
+]
+
+
+async def _exec_tool(name: str, inp: Dict) -> str:
+    """Execute a chat tool and return result as string."""
+    try:
+        if name == "search_leads":
+            query = inp.get("query", "")
+            tier = inp.get("tier")
+            limit = inp.get("limit", 25)
+            url = f"{SUPABASE_URL}/rest/v1/leads?order=rank_score.desc.nullslast&limit={limit}"
+            url += "&select=id,full_name,title,company,company_industry,region,rank_score,coherence_score,qualification_tier,psi_intent,rho_authority,q_urgency,q_optimized,f_fit,dimensional_fractures,buying_signals,user_notes,user_status,outreach_status"
+            if tier:
+                url += f"&qualification_tier=eq.{tier}"
+            if query:
+                url += f"&or=(full_name.ilike.%25{query}%25,company.ilike.%25{query}%25,region.ilike.%25{query}%25)"
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(url, headers=HEADERS_SB)
+                resp.raise_for_status()
+                leads = resp.json()
+            return json.dumps(leads, indent=1)
+
+        elif name == "update_lead":
+            lead_id = inp.pop("lead_id")
+            data = {k: v for k, v in inp.items() if v is not None}
+            now = datetime.now(timezone.utc).isoformat()
+            data["updated_at"] = now
+            if "buying_signals" in data:
+                data["buying_signals_updated_at"] = now
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.patch(
+                    f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead_id}",
+                    headers=HEADERS_SB, json=data)
+                resp.raise_for_status()
+                result = resp.json()
+            return f"Updated lead {lead_id}: {list(data.keys())}"
+
+        elif name == "scout_lead":
+            lead_id = inp["lead_id"]
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(
+                    f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead_id}",
+                    headers=HEADERS_SB)
+                leads = resp.json()
+                if not leads:
+                    return "Lead not found"
+                lead = leads[0]
+            signals = await ScoutAgent.scout_lead(lead)
+            now = datetime.now(timezone.utc).isoformat()
+            async with httpx.AsyncClient(timeout=30) as client:
+                await client.patch(
+                    f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead_id}",
+                    headers=HEADERS_SB,
+                    json={**signals, "buying_signals_updated_at": now,
+                          "web_signals_updated_at": now, "updated_at": now})
+            return f"Scouted {lead['full_name']} at {lead['company']}. Signals written to database.\nSignals: {signals['buying_signals'][:500]}"
+
+        elif name == "rank_lead":
+            lead_id = inp["lead_id"]
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(
+                    f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead_id}&select=id,buying_signals,web_signals,linkedin_summary,title,company_industry,company_size,company_description",
+                    headers=HEADERS_SB)
+                leads = resp.json()
+                if not leads:
+                    return "Lead not found"
+                lead = leads[0]
+            analysis = CERATABridge.analyze(
+                buying_signals=lead.get("buying_signals", ""),
+                web_signals=lead.get("web_signals", ""),
+                linkedin_summary=lead.get("linkedin_summary", ""),
+                title=lead.get("title", ""),
+                company_industry=lead.get("company_industry", ""),
+                company_size=lead.get("company_size") or 0,
+                company_description=lead.get("company_description", ""))
+            now = datetime.now(timezone.utc).isoformat()
+            async with httpx.AsyncClient(timeout=30) as client:
+                await client.patch(
+                    f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead_id}",
+                    headers=HEADERS_SB,
+                    json={**analysis, "ranked_at": now, "updated_at": now})
+            return f"Re-ranked: {json.dumps(analysis)}"
+
+        return f"Unknown tool: {name}"
+    except Exception as e:
+        return f"Tool error: {str(e)[:300]}"
+
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
+    # Build context
     async with httpx.AsyncClient(timeout=30) as client:
         stats_resp = await client.get(f"{SUPABASE_URL}/rest/v1/leads?select=qualification_tier&limit=1000", headers=HEADERS_SB)
         all_tiers = {}
@@ -469,21 +610,52 @@ async def chat(req: ChatRequest):
             all_tiers[t] = all_tiers.get(t, 0) + 1
 
         top_resp = await client.get(
-            f"{SUPABASE_URL}/rest/v1/leads?order=rank_score.desc.nullslast&limit=25&select=id,full_name,title,company,company_industry,region,rank_score,coherence_score,qualification_tier,psi_intent,rho_authority,q_urgency,q_optimized,f_fit,dimensional_fractures,buying_signals,user_notes,user_status,outreach_status",
+            f"{SUPABASE_URL}/rest/v1/leads?order=rank_score.desc.nullslast&limit=25&select=id,full_name,title,company,region,rank_score,coherence_score,qualification_tier,psi_intent,rho_authority,q_optimized,f_fit,dimensional_fractures,buying_signals,user_notes,user_status",
             headers=HEADERS_SB)
         top_leads = top_resp.json()
 
     context = f"DB: {sum(all_tiers.values())} leads, tiers: {json.dumps(all_tiers)}\nTOP 25:\n{json.dumps(top_leads, indent=1)}"
     messages = [*req.history, {"role": "user", "content": f"{context}\n\nUser: {req.message}"}]
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post("https://api.anthropic.com/v1/messages",
-            headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
-            json={"model": "claude-sonnet-4-20250514", "max_tokens": 2048, "system": CHAT_SYSTEM, "messages": messages})
-        resp.raise_for_status()
+    # Agentic loop — keep calling until no more tool_use
+    max_iterations = 5
+    for _ in range(max_iterations):
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post("https://api.anthropic.com/v1/messages",
+                headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
+                json={"model": "claude-sonnet-4-20250514", "max_tokens": 4096, "system": CHAT_SYSTEM,
+                      "tools": CHAT_TOOLS, "messages": messages})
+            resp.raise_for_status()
+            data = resp.json()
 
-    reply = "\n".join(b["text"] for b in resp.json().get("content", []) if b.get("type") == "text")
+        # Collect response blocks
+        assistant_content = data.get("content", [])
+        messages.append({"role": "assistant", "content": assistant_content})
 
+        # Check if there are tool calls
+        tool_uses = [b for b in assistant_content if b.get("type") == "tool_use"]
+        if not tool_uses:
+            break  # No tools called, we're done
+
+        # Execute tools and add results
+        tool_results = []
+        for tu in tool_uses:
+            result = await _exec_tool(tu["name"], tu["input"])
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tu["id"],
+                "content": result,
+            })
+        messages.append({"role": "user", "content": tool_results})
+
+    # Extract final text
+    reply_parts = []
+    for block in assistant_content:
+        if block.get("type") == "text":
+            reply_parts.append(block["text"])
+    reply = "\n".join(reply_parts) or "Action completed."
+
+    # Save to chat history
     async with httpx.AsyncClient(timeout=30) as client:
         await client.post(f"{SUPABASE_URL}/rest/v1/chat_messages", headers=HEADERS_SB,
             json=[{"role": "user", "content": req.message}, {"role": "assistant", "content": reply}])
