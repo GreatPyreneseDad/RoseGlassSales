@@ -297,7 +297,7 @@ async def upload_csv(file: UploadFile = File(...)):
     raw = await file.read()
 
     if fname.endswith(".numbers"):
-        import tempfile, subprocess
+        import tempfile
         with tempfile.NamedTemporaryFile(suffix=".numbers", delete=False) as tmp:
             tmp.write(raw)
             tmp_path = tmp.name
@@ -313,12 +313,12 @@ async def upload_csv(file: UploadFile = File(...)):
                     val = table.cell(r, c).value
                     row[headers_raw[c]] = str(val) if val is not None else ""
                 data_rows.append(row)
-        except ImportError:
-            raise HTTPException(400, "Numbers format not supported on this server. Export as CSV from Numbers first.")
+            reader_fieldnames = headers_raw
+            reader_rows = data_rows
+        except Exception as e:
+            raise HTTPException(400, f"Could not parse .numbers file: {str(e)[:200]}. Try exporting as CSV from Apple Numbers (File > Export To > CSV).")
         finally:
             os.unlink(tmp_path)
-        reader_fieldnames = headers_raw
-        reader_rows = data_rows
 
     elif fname.endswith((".xlsx", ".xls")):
         import tempfile
