@@ -1209,16 +1209,28 @@ async def update_lead(lead_id: str, update: LeadUpdate, authorization: str = Hea
 @app.get("/api/stats")
 async def get_stats(authorization: str = Header(None)):
     user = await get_current_user(authorization)
+    # Use Supabase RPC or direct SQL-like aggregation via multiple small queries
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(f"{SUPABASE_URL}/rest/v1/leads?select=qualification_tier,coherence_score&limit=1000&user_id=eq.{user['user_id']}", headers=HEADERS_SB)
-        leads = resp.json()
-    scored = [l for l in leads if l.get("coherence_score")]
+        # Get total count using Prefer: count=exact header
+        count_headers = {**HEADERS_SB, "Prefer": "count=exact", "Range-Unit": "items", "Range": "0-0"}
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/leads?select=id&user_id=eq.{user['user_id']}",
+            headers=count_headers)
+        total = int(resp.headers.get("content-range", "0-0/0").split("/")[-1])
+
+        # Get tier counts — fetch all qualification_tier values (tiny payload)
+        tier_resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/leads?select=qualification_tier&user_id=eq.{user['user_id']}&limit=10000",
+            headers=HEADERS_SB)
+        tier_rows = tier_resp.json() if tier_resp.status_code == 200 else []
+
     tiers = {}
-    for l in leads:
-        t = l.get("qualification_tier") or "unscored"
+    for r in tier_rows:
+        t = r.get("qualification_tier") or "unscored"
         tiers[t] = tiers.get(t, 0) + 1
-    return {"total": len(leads), "scored": len(scored), "tiers": tiers,
-            "avg_coherence": round(sum(l["coherence_score"] for l in scored)/len(scored), 3) if scored else 0}
+
+    scored = sum(v for k, v in tiers.items() if k != "unscored")
+    return {"total": total, "scored": scored, "tiers": tiers, "avg_coherence": 0}
 
 # ─── Background Scout Scheduler ───────────────────────────
 
