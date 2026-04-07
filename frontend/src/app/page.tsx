@@ -123,13 +123,20 @@ function LeadCard({ lead, onFocus }: { lead:Lead; onFocus:(l:Lead)=>void }) {
       </div>
       {hasFrac&&<div style={{marginTop:10,padding:'10px 14px',background:'#16122a',border:'1px solid #7c3aed30',borderRadius:8,fontSize:11,color:'#c4b5fd',lineHeight:1.5}}><span style={{fontWeight:700}}>⚡ Fracture: </span>{lead.dimensional_fractures}</div>}
 
+      {/* Contact info */}
+      {(lead.email || lead.phone_number1 || lead.mobile_phone1) && (
+        <div style={{marginTop:10,display:'flex',gap:16,fontSize:11,color:'#94a3b8',flexWrap:'wrap'}}>
+          {lead.email && <span style={{...mono,color:'#a78bfa'}}>{lead.email}</span>}
+          {(lead.phone_number1 || lead.mobile_phone1) && <span style={{...mono,color:'#64748b'}}>{lead.phone_number1 || lead.mobile_phone1}</span>}
+        </div>
+      )}
+
       {/* Action row */}
-      <div style={{display:'flex',gap:8,marginTop:10,alignItems:'center'}}>
+      <div style={{display:'flex',gap:8,marginTop:8,alignItems:'center'}}>
         <button onClick={()=>onFocus(lead)} style={{padding:'6px 14px',borderRadius:6,border:'1px solid #7c3aed33',background:'#7c3aed10',color:'#a78bfa',fontSize:11,fontWeight:600,cursor:'pointer',display:'inline-flex',alignItems:'center',gap:6}}>◈ Focus — Call Mode</button>
         <button onClick={()=>setOpen(!open)} style={{padding:'6px 14px',borderRadius:6,border:'1px solid #1e293b',background:open?'#111827':'transparent',color:open?'#e2e8f0':'#64748b',fontSize:11,fontWeight:500,cursor:'pointer',display:'inline-flex',alignItems:'center',gap:4}}>
           {open?'▾ Hide':'▸ View'} Intel{hasSignals?' ●':''}
         </button>
-        {lead.email&&<a href={`mailto:${lead.email}`} style={{padding:'6px 10px',borderRadius:6,border:'1px solid #1e293b',color:'#64748b',fontSize:11,textDecoration:'none',cursor:'pointer'}}>✉ Email</a>}
         {(lead.linkedin||lead.linkedin_profile_url)&&<a href={lead.linkedin||lead.linkedin_profile_url} target="_blank" rel="noopener noreferrer" style={{padding:'6px 10px',borderRadius:6,border:'1px solid #1e293b',color:'#64748b',fontSize:11,textDecoration:'none',cursor:'pointer'}}>in LinkedIn</a>}
       </div>
 

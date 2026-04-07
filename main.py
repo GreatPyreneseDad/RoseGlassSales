@@ -921,7 +921,7 @@ async def _exec_tool(name: str, inp: Dict, user_id: str = None) -> str:
             tier = inp.get("tier")
             limit = inp.get("limit", 25)
             url = f"{SUPABASE_URL}/rest/v1/leads?order=rank_score.desc.nullslast&limit={limit}"
-            url += "&select=id,full_name,title,company,company_industry,region,rank_score,coherence_score,qualification_tier,psi_intent,rho_authority,q_urgency,q_optimized,f_fit,dimensional_fractures,buying_signals,user_notes,user_status,outreach_status"
+            url += "&select=id,full_name,title,company,company_industry,region,locality,rank_score,coherence_score,qualification_tier,psi_intent,rho_authority,q_urgency,q_optimized,f_fit,dimensional_fractures,buying_signals,user_notes,user_status,outreach_status,email,phone_number1,mobile_phone1,linkedin_profile_url,company_domain,company_size_range,company_revenue"
             url += f"&user_id=eq.{user['user_id']}"
             if tier:
                 url += f"&qualification_tier=eq.{tier}"
@@ -1011,7 +1011,7 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
             all_tiers[t] = all_tiers.get(t, 0) + 1
 
         top_resp = await client.get(
-            f"{SUPABASE_URL}/rest/v1/leads?order=rank_score.desc.nullslast&limit=25&user_id=eq.{user['user_id']}&select=id,full_name,title,company,region,rank_score,coherence_score,qualification_tier,psi_intent,rho_authority,q_optimized,f_fit,dimensional_fractures,buying_signals,user_notes,user_status",
+            f"{SUPABASE_URL}/rest/v1/leads?order=rank_score.desc.nullslast&limit=25&user_id=eq.{user['user_id']}&select=id,full_name,title,company,region,locality,rank_score,coherence_score,qualification_tier,psi_intent,rho_authority,q_optimized,f_fit,dimensional_fractures,buying_signals,user_notes,user_status,email,phone_number1,mobile_phone1,linkedin_profile_url,company_domain",
             headers=HEADERS_SB)
         top_leads = top_resp.json()
 
