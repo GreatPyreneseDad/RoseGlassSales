@@ -1158,13 +1158,14 @@ RULES:
 - Reference ONE specific thing from the conversation — the thing THEY said, not what you researched.
 - Use the pricing THEY gave you. Never invent pricing.
 - Sound like a human who just got off the phone, not a marketing team.
-- No bold, no bullets, no formatting. Plain text email.
-- No "I hope this finds you well." No "It was great chatting." No "I wanted to follow up."
+- ABSOLUTELY NO markdown formatting. No ** for bold. No bullet points. No dashes as lists. Plain text only.
+- No "I hope this finds you well." No "It was great chatting." No "I wanted to follow up." No "Great talking."
 - Start with their name and get to the point in the first sentence.
 - End with one specific action and a specific time.
-- Sign with just the user's name, no title block.
+- Sign with just the user's first name. No title, no company, no signature block.
+- The subject line should be lowercase and casual, like a real person wrote it. No title case.
 
-Output ONLY the email. Subject line first, then body. Nothing else."""
+Output the subject line on the first line (no "Subject:" prefix), then a blank line, then the email body. Nothing else. No labels. No commentary."""
 
                 async with httpx.AsyncClient(timeout=60) as client:
                     resp = await client.post(
