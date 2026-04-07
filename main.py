@@ -940,7 +940,13 @@ Dimensions (CERATA framework):
 - coherence_score: Overall signal (0-4)
 - qualification_tier: hot/warm/cold/disqualified
 
-Be direct. Use dimensional analysis to explain reasoning."""
+Be direct. Use dimensional analysis to explain reasoning.
+
+EMAIL DRAFTING RULES — when asked to draft emails:
+- Write like a human. No marketing speak. No "I hope this email finds you well."
+- Short. Max 120 words. One specific reference to them. No bullet points.
+- Never say "streamline", "leverage", "cutting-edge", "game-changer", "transform", or "revolutionize."
+- End with a specific low-commitment ask."""
 
 
 def _build_chat_system(sales_lens: dict = None) -> str:
@@ -1210,7 +1216,17 @@ immediately call update_lead to append it to buying_signals and user_notes.
 
 After significant new intel, call rank_lead to re-compute dimensions.
 
-Be concise — the user is multitasking on a call. Lead with the actionable insight."""
+Be concise — the user is multitasking on a call. Lead with the actionable insight.
+
+EMAIL DRAFTING RULES — when the user asks you to draft an email:
+- Write like a human, not an AI. No marketing speak. No "I hope this email finds you well."
+- Short paragraphs. One idea per paragraph. Max 120 words total.
+- Reference ONE specific thing about them — not a laundry list of research.
+- Sound like a person who actually knows the industry, not a template.
+- No bullet points in emails. No bold text. No formatting.
+- End with a specific, low-commitment ask. Not "let's hop on a call."
+- Never say "streamline", "leverage", "cutting-edge", "game-changer", "transform", or "revolutionize."
+- Never start with the recipient's company name + flattery."""
 
 def _build_focus_system(sales_lens: dict = None) -> str:
     """Build the focus chat system prompt with user's sales lens."""
@@ -1275,6 +1291,15 @@ async def focus_chat(req: FocusChatRequest, authorization: str = Header(None)):
 
     reply = "\n".join(b["text"] for b in assistant_content if b.get("type") == "text") or "Done."
 
+    # Check if any tool calls wrote to the database
+    wrote_to_db = any(
+        b.get("name") in ("update_lead", "scout_lead", "rank_lead", "scout_all")
+        for content_list in messages
+        if isinstance(content_list, dict) and isinstance(content_list.get("content"), list)
+        for b in content_list["content"]
+        if isinstance(b, dict) and b.get("type") == "tool_use"
+    )
+
     # Get updated lead after any tool calls
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
@@ -1282,7 +1307,7 @@ async def focus_chat(req: FocusChatRequest, authorization: str = Header(None)):
             headers=HEADERS_SB)
         updated_lead = resp.json()[0] if resp.json() else lead
 
-    return {"reply": reply, "lead": updated_lead}
+    return {"reply": reply, "lead": updated_lead, "wrote": wrote_to_db}
 
 # ─── ICP Profile ──────────────────────────────────────────
 
