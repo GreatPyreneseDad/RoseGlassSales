@@ -1224,8 +1224,16 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
             headers=HEADERS_SB)
         top_leads = top_resp.json()
 
-    context = f"DB: {sum(all_tiers.values())} leads, tiers: {json.dumps(all_tiers)}\nTOP 25:\n{json.dumps(top_leads, indent=1)}"
-    messages = [*req.history, {"role": "user", "content": f"{context}\n\nUser: {req.message}"}]
+    # Trim top leads context to prevent overflow
+    top_leads_slim = [{"full_name": l.get("full_name"), "title": l.get("title"), "company": l.get("company"),
+                        "coherence_score": l.get("coherence_score"), "qualification_tier": l.get("qualification_tier"),
+                        "email": l.get("email")} for l in top_leads[:15]]
+    context = f"DB: {sum(all_tiers.values())} leads, tiers: {json.dumps(all_tiers)}\nTOP 15:\n{json.dumps(top_leads_slim, indent=1)}"
+    messages = [*req.history[-6:], {"role": "user", "content": f"{context}\n\nUser: {req.message}"}]
+
+    # Fetch sales lens and build system prompt
+    sales_lens = await _get_user_sales_lens(user["user_id"])
+    chat_system = _build_chat_system(sales_lens)
 
     # Agentic loop — keep calling until no more tool_use
     max_iterations = 5
