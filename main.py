@@ -138,7 +138,7 @@ class CERATABridge:
     @classmethod
     def analyze(cls, buying_signals="", web_signals="", linkedin_summary="",
                 title="", company_industry="", company_size=0,
-                company_description=""):
+                company_description="", icp=None, lead_data=None):
         combined = " ".join(filter(None, [
             buying_signals, web_signals, linkedin_summary,
             title, company_industry, company_description,
@@ -155,6 +155,10 @@ class CERATABridge:
         q_raw = cls._extract(combined, cls.Q_SIGNALS)
         f = cls._extract(combined, cls.F_SIGNALS)
         f = cls._boost_industry(f, company_industry)
+
+        # Apply ICP boost if user has defined a profile
+        if icp and lead_data:
+            psi, rho, f = cls._boost_icp(psi, rho, f, lead_data, icp)
 
         q_opt = cls._mm(q_raw)
         coupling = cls.COUPLING_STRENGTH * rho * psi
@@ -199,6 +203,64 @@ class CERATABridge:
         if any(x in ind for x in ["health","medical","pharma","biotech"]): return min(1.0, f+0.10)
         if any(x in ind for x in ["financial","insurance","real estate"]): return min(1.0, f+0.10)
         return f
+
+    @classmethod
+    def _boost_icp(cls, psi, rho, f, lead_data, icp):
+        """Boost dimensions based on user-defined ICP match."""
+        if not icp:
+            return psi, rho, f
+        
+        title = (lead_data.get("title") or "").lower()
+        industry = (lead_data.get("company_industry") or "").lower()
+        region = (lead_data.get("region") or "").lower()
+        company_size = lead_data.get("company_size") or 0
+        text = " ".join(filter(None, [title, industry, lead_data.get("company_description",""), lead_data.get("buying_signals","")])).lower()
+        
+        boosts = 0
+        
+        # Title match
+        for t in icp.get("target_titles", []):
+            if t.lower() in title:
+                rho = min(1.0, rho + 0.15)
+                boosts += 1
+                break
+        
+        # Industry match
+        for ind in icp.get("target_industries", []):
+            if ind.lower() in industry:
+                f = min(1.0, f + 0.20)
+                boosts += 1
+                break
+        
+        # Company size match
+        size_min = icp.get("target_company_size_min")
+        size_max = icp.get("target_company_size_max")
+        if company_size and size_min and size_max:
+            if size_min <= company_size <= size_max:
+                f = min(1.0, f + 0.10)
+                boosts += 1
+        
+        # Region match
+        for r in icp.get("target_regions", []):
+            if r.lower() in region:
+                f = min(1.0, f + 0.05)
+                boosts += 1
+                break
+        
+        # Keyword match
+        for kw in icp.get("target_keywords", []):
+            if kw.lower() in text:
+                psi = min(1.0, psi + 0.05)
+                boosts += 1
+        
+        # Exclusion match — penalize
+        for kw in icp.get("exclude_keywords", []):
+            if kw.lower() in text:
+                psi = max(0, psi - 0.3)
+                f = max(0, f - 0.3)
+                break
+        
+        return psi, rho, f
 
     @classmethod
     def _mm(cls, q):
@@ -813,6 +875,7 @@ async def run_scouts(limit: int = 20, tier: Optional[str] = None, rescout: bool 
 @app.post("/api/rank/run")
 async def run_ranking(authorization: str = Header(None)):
     user = await get_current_user(authorization)
+    icp = await _get_user_icp(user["user_id"])
     async with httpx.AsyncClient(timeout=30) as client:
         run_resp = await client.post(f"{SUPABASE_URL}/rest/v1/rank_runs", headers=HEADERS_SB,
                                      json={"status": "running"})
@@ -820,7 +883,7 @@ async def run_ranking(authorization: str = Header(None)):
         run_id = run_resp.json()[0]["id"]
 
         leads_resp = await client.get(
-            f"{SUPABASE_URL}/rest/v1/leads?buying_signals=not.is.null&user_id=eq.{user['user_id']}&select=id,buying_signals,web_signals,linkedin_summary,title,company_industry,company_size,company_description&limit=1000",
+            f"{SUPABASE_URL}/rest/v1/leads?buying_signals=not.is.null&user_id=eq.{user['user_id']}&select=id,buying_signals,web_signals,linkedin_summary,title,company_industry,company_size,company_size_range,company_description,region,company_revenue&limit=1000",
             headers=HEADERS_SB)
         leads_resp.raise_for_status()
         leads = leads_resp.json()
@@ -837,7 +900,8 @@ async def run_ranking(authorization: str = Header(None)):
                 linkedin_summary=lead.get("linkedin_summary",""), title=lead.get("title",""),
                 company_industry=lead.get("company_industry",""),
                 company_size=lead.get("company_size") or 0,
-                company_description=lead.get("company_description",""))
+                company_description=lead.get("company_description",""),
+                icp=icp, lead_data=lead)
             await client.patch(f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead['id']}", headers=HEADERS_SB,
                 json={**a, "ranked_at": now, "updated_at": now})
             tiers[a["qualification_tier"]] = tiers.get(a["qualification_tier"], 0) + 1
@@ -1178,6 +1242,38 @@ async def focus_chat(req: FocusChatRequest, authorization: str = Header(None)):
 
     return {"reply": reply, "lead": updated_lead}
 
+# ─── ICP Profile ──────────────────────────────────────────
+
+class ICPProfile(BaseModel):
+    target_titles: List[str] = []
+    target_industries: List[str] = []
+    target_company_size_min: Optional[int] = None
+    target_company_size_max: Optional[int] = None
+    target_regions: List[str] = []
+    target_keywords: List[str] = []
+    exclude_keywords: List[str] = []
+    notes: str = ""
+
+@app.get("/api/icp")
+async def get_icp(authorization: str = Header(None)):
+    user = await get_current_user(authorization)
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/users?id=eq.{user['user_id']}&select=icp_profile",
+            headers=HEADERS_SB)
+        data = resp.json()
+    return data[0].get("icp_profile") or {} if data else {}
+
+@app.post("/api/icp")
+async def save_icp(profile: ICPProfile, authorization: str = Header(None)):
+    user = await get_current_user(authorization)
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.patch(
+            f"{SUPABASE_URL}/rest/v1/users?id=eq.{user['user_id']}",
+            headers=HEADERS_SB,
+            json={"icp_profile": profile.model_dump()})
+    return {"saved": True, "profile": profile.model_dump()}
+
 # ─── Lead CRUD ────────────────────────────────────────────
 
 @app.get("/api/leads")
@@ -1233,6 +1329,19 @@ SCOUT_INTERVAL = int(os.environ.get("SCOUT_INTERVAL_SECONDS", "60"))  # 5 min de
 SCOUT_BATCH = int(os.environ.get("SCOUT_BATCH_SIZE", "20"))
 SCOUT_ENABLED = os.environ.get("SCOUT_ENABLED", "true").lower() == "true"
 
+async def _get_user_icp(user_id: str) -> dict:
+    """Fetch the user's ICP profile from Supabase."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{SUPABASE_URL}/rest/v1/users?id=eq.{user_id}&select=icp_profile",
+                headers=HEADERS_SB)
+            data = resp.json() if resp.status_code == 200 else []
+            return data[0].get("icp_profile") or {} if data else {}
+    except:
+        return {}
+
+
 async def _scout_user(user_id: str, batch_size: int = 5):
     """Scout one batch for a single user. Returns count scouted."""
     async with httpx.AsyncClient(timeout=30) as client:
@@ -1243,6 +1352,9 @@ async def _scout_user(user_id: str, batch_size: int = 5):
 
     if not leads:
         return 0
+    
+    # Fetch ICP once per batch
+    icp = await _get_user_icp(user_id)
 
     count = 0
     for lead in leads:
@@ -1269,7 +1381,8 @@ async def _scout_user(user_id: str, batch_size: int = 5):
                         title=ld.get("title",""),
                         company_industry=ld.get("company_industry",""),
                         company_size=ld.get("company_size") or 0,
-                        company_description=ld.get("company_description",""))
+                        company_description=ld.get("company_description",""),
+                        icp=icp, lead_data=ld)
                     await client.patch(
                         f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead['id']}",
                         headers=HEADERS_SB,

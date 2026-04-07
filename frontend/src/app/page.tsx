@@ -220,6 +220,73 @@ function CsvDropZone({onUploaded}:{onUploaded:(m:string)=>void}) {
 function ActionBtn({label,color,disabled,onClick}:{label:string;color:string;disabled:boolean;onClick:()=>void}){return<button onClick={onClick} disabled={disabled} style={{padding:'5px 12px',borderRadius:6,border:`1px solid ${color}33`,background:disabled?'#0f172a':`${color}10`,color:disabled?'#475569':color,fontSize:11,cursor:disabled?'default':'pointer',fontWeight:600}}>{label}</button>;}
 function QuickChips({onSend}:{onSend:(m:string)=>void}){return(<div style={{display:'flex',gap:5,marginBottom:6,flexWrap:'wrap'}}>{['Summarize call','Draft follow-up email','Re-rank this lead','What should I ask next?'].map(c=>(<button key={c} onClick={()=>onSend(c)} style={{padding:'3px 10px',borderRadius:12,border:'1px solid #1e293b',background:'transparent',color:'#64748b',fontSize:10,cursor:'pointer'}}>{c}</button>))}</div>);}
 
+function ICPPanel({onClose}:{onClose:()=>void}) {
+  const[titles,setTitles]=useState('');const[industries,setIndustries]=useState('');
+  const[regions,setRegions]=useState('');const[keywords,setKeywords]=useState('');
+  const[excludes,setExcludes]=useState('');const[sizeMin,setSizeMin]=useState('');
+  const[sizeMax,setSizeMax]=useState('');const[notes,setNotes]=useState('');
+  const[saved,setSaved]=useState(false);const[loading,setLoading]=useState(true);
+
+  useEffect(()=>{api('/icp').then(r=>r.json()).then(d=>{
+    setTitles((d.target_titles||[]).join(', '));
+    setIndustries((d.target_industries||[]).join(', '));
+    setRegions((d.target_regions||[]).join(', '));
+    setKeywords((d.target_keywords||[]).join(', '));
+    setExcludes((d.exclude_keywords||[]).join(', '));
+    setSizeMin(d.target_company_size_min?.toString()||'');
+    setSizeMax(d.target_company_size_max?.toString()||'');
+    setNotes(d.notes||'');
+    setLoading(false);
+  }).catch(()=>setLoading(false));},[]);
+
+  const save=async()=>{
+    const split=(s:string)=>s.split(',').map(x=>x.trim()).filter(Boolean);
+    const body={
+      target_titles:split(titles),target_industries:split(industries),
+      target_regions:split(regions),target_keywords:split(keywords),
+      exclude_keywords:split(excludes),
+      target_company_size_min:sizeMin?parseInt(sizeMin):null,
+      target_company_size_max:sizeMax?parseInt(sizeMax):null,
+      notes,
+    };
+    await apiJson('/icp',body);setSaved(true);setTimeout(()=>setSaved(false),2000);
+  };
+
+  const inp:React.CSSProperties={padding:'8px 10px',borderRadius:6,border:'1px solid #1e293b',background:'#020617',color:'#f1f5f9',fontSize:12,outline:'none',width:'100%'};
+  const lbl:React.CSSProperties={fontSize:10,color:'#64748b',textTransform:'uppercase',letterSpacing:1,fontWeight:600,marginBottom:4};
+  const hint:React.CSSProperties={fontSize:10,color:'#475569',marginTop:2};
+
+  return(
+    <div style={{position:'fixed',inset:0,zIndex:300,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,0.6)'}}>
+      <div style={{width:480,maxHeight:'85vh',overflowY:'auto',background:'#0a0f1a',borderRadius:16,border:'1px solid #1e293b',padding:24}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+          <div>
+            <h2 style={{margin:0,fontSize:18,color:'#f1f5f9'}}>Ideal Customer Profile</h2>
+            <p style={{margin:'4px 0 0',fontSize:11,color:'#64748b'}}>Define your ICP to calibrate lead scoring</p>
+          </div>
+          <button onClick={onClose} style={{background:'#1e293b',border:'none',color:'#94a3b8',width:28,height:28,borderRadius:6,cursor:'pointer'}}>✕</button>
+        </div>
+        {loading?<div style={{color:'#475569',textAlign:'center',padding:20}}>Loading...</div>:(
+          <div style={{display:'flex',flexDirection:'column',gap:14}}>
+            <div><div style={lbl}>Target Titles</div><input value={titles} onChange={e=>setTitles(e.target.value)} placeholder="VP Sales, Head of BD, CRO, CEO" style={inp}/><div style={hint}>Comma-separated. Leads matching these titles get an authority (ρ) boost.</div></div>
+            <div><div style={lbl}>Target Industries</div><input value={industries} onChange={e=>setIndustries(e.target.value)} placeholder="SaaS, Healthcare, Financial Services" style={inp}/><div style={hint}>Comma-separated. Matching leads get a fit (f) boost.</div></div>
+            <div style={{display:'flex',gap:10}}>
+              <div style={{flex:1}}><div style={lbl}>Company Size Min</div><input value={sizeMin} onChange={e=>setSizeMin(e.target.value)} placeholder="50" type="number" style={inp}/></div>
+              <div style={{flex:1}}><div style={lbl}>Company Size Max</div><input value={sizeMax} onChange={e=>setSizeMax(e.target.value)} placeholder="5000" type="number" style={inp}/></div>
+            </div>
+            <div><div style={lbl}>Target Regions</div><input value={regions} onChange={e=>setRegions(e.target.value)} placeholder="United States, Canada, United Kingdom" style={inp}/><div style={hint}>Comma-separated. Minor fit boost for matching regions.</div></div>
+            <div><div style={lbl}>Buying Signal Keywords</div><input value={keywords} onChange={e=>setKeywords(e.target.value)} placeholder="CRM, pipeline, sales ops, revenue operations" style={inp}/><div style={hint}>Comma-separated. Leads with these in their signals get an intent (Ψ) boost.</div></div>
+            <div><div style={lbl}>Exclude Keywords</div><input value={excludes} onChange={e=>setExcludes(e.target.value)} placeholder="intern, student, retired, nonprofit" style={inp}/><div style={hint}>Comma-separated. Leads with these get penalized on intent and fit.</div></div>
+            <div><div style={lbl}>Notes</div><textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Describe your ideal customer in plain language..." rows={3} style={{...inp,resize:'vertical'}}/></div>
+            <button onClick={save} style={{width:'100%',padding:'10px 0',borderRadius:8,border:'none',background:saved?'#34d39930':'linear-gradient(135deg,#7c3aed,#ec4899)',color:saved?'#34d399':'#fff',fontWeight:600,cursor:'pointer',fontSize:13,transition:'all 0.2s'}}>{saved?'✓ Saved — Re-rank to apply':'Save ICP Profile'}</button>
+            <div style={{fontSize:10,color:'#475569',textAlign:'center'}}>After saving, click "Rank All" to re-score your leads against this profile.</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function LoginScreen({onLogin}:{onLogin:(u:any)=>void}){const[mode,setMode]=useState<'login'|'register'>('login');const[un,setUn]=useState('');const[pw,setPw]=useState('');const[dn,setDn]=useState('');const[cn,setCn]=useState('');const[err,setErr]=useState('');const[ld,setLd]=useState(false);const sub=async()=>{setErr('');setLd(true);try{const ep=mode==='login'?'/auth/login':'/auth/register';const body=mode==='login'?{username:un,password:pw}:{username:un,password:pw,display_name:dn,company_name:cn};const r=await fetch(`/api${ep}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(!r.ok){setErr(d.detail||'Failed');setLd(false);return;}localStorage.setItem('rgs_token',d.token);onLogin(d.user||{username:un});}catch{setErr('Connection error');}setLd(false);};const inp:React.CSSProperties={padding:'10px 12px',borderRadius:8,border:'1px solid #1e293b',background:'#020617',color:'#f1f5f9',fontSize:13,outline:'none',width:'100%'};return(<div style={{height:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#020617',fontFamily:"'DM Sans',sans-serif"}}><div style={{width:360,padding:32,background:'#0a0f1a',borderRadius:16,border:'1px solid #1e293b'}}><div style={{textAlign:'center',marginBottom:24}}><div style={{width:48,height:48,borderRadius:12,background:'linear-gradient(135deg,#7c3aed,#ec4899)',display:'inline-flex',alignItems:'center',justifyContent:'center',fontSize:22,fontWeight:800,color:'#fff',marginBottom:12}}>◈</div><h1 style={{margin:0,fontSize:20,color:'#f1f5f9',fontWeight:700}}>Rose Glass Sales</h1><p style={{margin:'4px 0 0',fontSize:11,color:'#475569',letterSpacing:1.5,textTransform:'uppercase'}}>CERATA Intelligence</p></div><div style={{display:'flex',gap:2,background:'#0f172a',borderRadius:8,padding:2,marginBottom:20}}>{(['login','register'] as const).map(m=>(<button key={m} onClick={()=>setMode(m)} style={{flex:1,padding:'7px 0',borderRadius:6,border:'none',cursor:'pointer',fontSize:12,fontWeight:500,background:mode===m?'#1e293b':'transparent',color:mode===m?'#f1f5f9':'#64748b'}}>{m==='login'?'Sign In':'Create Account'}</button>))}</div><div style={{display:'flex',flexDirection:'column',gap:10}}><input value={un} onChange={e=>setUn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sub()} placeholder="Username" style={inp}/><input value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sub()} placeholder="Password" type="password" style={inp}/>{mode==='register'&&<><input value={dn} onChange={e=>setDn(e.target.value)} placeholder="Your name" style={inp}/><input value={cn} onChange={e=>setCn(e.target.value)} placeholder="Company name" style={inp}/></>}{err&&<div style={{color:'#ef4444',fontSize:12}}>{err}</div>}<button onClick={sub} disabled={ld} style={{padding:'10px 0',borderRadius:8,border:'none',background:ld?'#334155':'linear-gradient(135deg,#7c3aed,#ec4899)',color:'#fff',fontWeight:600,cursor:ld?'default':'pointer',fontSize:14}}>{ld?'Loading...':mode==='login'?'Sign In':'Create Account'}</button></div></div></div>);}
 
 function SettingsPanel({user,onClose,onLogout}:{user:any;onClose:()=>void;onLogout:()=>void}){const[dn,setDn]=useState(user?.display_name||'');const[em,setEm]=useState(user?.email||'');const[ph,setPh]=useState(user?.phone||'');const[cn,setCn]=useState(user?.company_name||'');const[cp,setCp]=useState('');const[np,setNp]=useState('');const[msg,setMsg]=useState('');const inp:React.CSSProperties={padding:'8px 10px',borderRadius:6,border:'1px solid #1e293b',background:'#020617',color:'#f1f5f9',fontSize:12,outline:'none',width:'100%'};const btn:React.CSSProperties={width:'100%',padding:'7px 0',borderRadius:6,border:'none',background:'#7c3aed22',color:'#a78bfa',fontSize:11,fontWeight:600,cursor:'pointer',marginTop:8};return(<div style={{position:'fixed',inset:0,zIndex:300,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,0.6)'}}><div style={{width:400,maxHeight:'80vh',overflowY:'auto',background:'#0a0f1a',borderRadius:16,border:'1px solid #1e293b',padding:24}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:16}}><h2 style={{margin:0,fontSize:18,color:'#f1f5f9'}}>Settings</h2><button onClick={onClose} style={{background:'#1e293b',border:'none',color:'#94a3b8',width:28,height:28,borderRadius:6,cursor:'pointer'}}>✕</button></div><div style={{fontSize:10,color:'#475569',textTransform:'uppercase',letterSpacing:1.5,fontWeight:600,marginBottom:6}}>Profile</div><div style={{display:'flex',flexDirection:'column',gap:6}}><input value={dn} onChange={e=>setDn(e.target.value)} placeholder="Display name" style={inp}/><input value={em} onChange={e=>setEm(e.target.value)} placeholder="Email" style={inp}/><input value={ph} onChange={e=>setPh(e.target.value)} placeholder="Phone" style={inp}/><input value={cn} onChange={e=>setCn(e.target.value)} placeholder="Company" style={inp}/><button onClick={async()=>{const r=await api('/auth/profile',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({display_name:dn,email:em,phone:ph,company_name:cn})});setMsg(r.ok?'Saved':'Failed');}} style={btn}>Save</button></div><div style={{fontSize:10,color:'#475569',textTransform:'uppercase',letterSpacing:1.5,fontWeight:600,margin:'16px 0 6px'}}>Password</div><div style={{display:'flex',flexDirection:'column',gap:6}}><input value={cp} onChange={e=>setCp(e.target.value)} placeholder="Current password" type="password" style={inp}/><input value={np} onChange={e=>setNp(e.target.value)} placeholder="New password" type="password" style={inp}/><button onClick={async()=>{if(!cp||!np)return;const r=await apiJson('/auth/change-password',{current_password:cp,new_password:np});setMsg(r.ok?'Changed':'Failed');setCp('');setNp('');}} style={btn}>Change Password</button></div>{msg&&<div style={{color:'#8b5cf6',fontSize:12,textAlign:'center',padding:'8px 0'}}>{msg}</div>}<button onClick={onLogout} style={{...btn,background:'#1e293b',color:'#ef4444',border:'1px solid #ef444433',marginTop:16}}>Sign Out</button></div></div>);}
@@ -231,6 +298,7 @@ export default function Home(){
   const[authed,setAuthed]=useState(false);const[user,setUser]=useState<any>(null);const[showSettings,setShowSettings]=useState(false);
   const[view,setView]=useState<'chat'|'leads'>('chat');const[leads,setLeads]=useState<Lead[]>([]);const[stats,setStats]=useState<Stats|null>(null);
   const[focusLead,setFocusLead]=useState<Lead|null>(null);
+  const[showICP,setShowICP]=useState(false);
   const[msgs,setMsgs]=useState<ChatMsg[]>([{role:'assistant',content:'Rose Glass Sales Intelligence online. Ask me about your leads, or switch to Leads and hit Focus to enter call mode.'}]);
   const[focusMsgs,setFocusMsgs]=useState<ChatMsg[]>([]);const[input,setInput]=useState('');
   const[busy,setBusy]=useState(false);const[scouting,setScouting]=useState(false);const[scoutingWarm,setScoutingWarm]=useState(false);const[ranking,setRanking]=useState(false);const[filter,setFilter]=useState<string|null>(null);
@@ -254,6 +322,7 @@ export default function Home(){
   // ─── CALL MODE ─────────────────────────────────────────
   if(focusLead)return(
     <div style={{height:'100vh',display:'flex',flexDirection:'column',background:'#020617',color:'#e2e8f0',fontFamily:"'DM Sans',sans-serif"}}>
+      {showICP&&<ICPPanel onClose={()=>setShowICP(false)}/>}
       {showSettings&&<SettingsPanel user={user} onClose={()=>setShowSettings(false)} onLogout={handleLogout}/>}
       <div style={{display:'flex',alignItems:'center',padding:'10px 20px',borderBottom:'1px solid #111827',background:'#060a14',flexShrink:0}}>
         <button onClick={exitFocus} style={{padding:'6px 12px',borderRadius:6,border:'1px solid #1e293b',background:'transparent',color:'#64748b',fontSize:12,cursor:'pointer',marginRight:16}}>← Back</button>
@@ -278,6 +347,7 @@ export default function Home(){
   // ─── MAIN VIEW ─────────────────────────────────────────
   return(
     <div style={{height:'100vh',display:'flex',flexDirection:'column',background:'#020617',color:'#e2e8f0',fontFamily:"'DM Sans',-apple-system,sans-serif"}}>
+      {showICP&&<ICPPanel onClose={()=>setShowICP(false)}/>}
       {showSettings&&<SettingsPanel user={user} onClose={()=>setShowSettings(false)} onLogout={handleLogout}/>}
       <header style={{display:'flex',alignItems:'center',padding:'10px 20px',borderBottom:'1px solid #111827',background:'#060a14'}}>
         <div style={{display:'flex',alignItems:'center',gap:10}}><div style={{width:30,height:30,borderRadius:7,background:'linear-gradient(135deg,#7c3aed,#ec4899)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,fontWeight:800,color:'#fff'}}>◈</div><div><div style={{fontSize:14,fontWeight:700,color:'#f1f5f9',letterSpacing:-0.3}}>Rose Glass Sales</div><div style={{fontSize:9,color:'#475569',letterSpacing:1.5,textTransform:'uppercase'}}>CERATA Intelligence</div></div></div>
@@ -286,6 +356,7 @@ export default function Home(){
           <ActionBtn label={scouting?'Scouting…':'Scout 10'} color="#8b5cf6" disabled={scouting} onClick={scout}/>
           <ActionBtn label={scoutingWarm?'Scouting…':'Scout Warm'} color="#f59e0b" disabled={scoutingWarm} onClick={scoutWarm}/>
           <ActionBtn label={ranking?'Ranking…':'Rank All'} color="#06b6d4" disabled={ranking} onClick={rank}/>
+          <button onClick={()=>setShowICP(true)} style={{padding:'5px 10px',borderRadius:6,border:'1px solid #7c3aed33',background:'#7c3aed08',color:'#a78bfa',fontSize:11,cursor:'pointer',fontWeight:600}} title="Ideal Customer Profile">ICP</button>
           <button onClick={()=>setShowSettings(true)} style={{padding:'5px 10px',borderRadius:6,border:'1px solid #1e293b',background:'transparent',color:'#64748b',fontSize:14,cursor:'pointer'}} title="Settings">⚙</button>
         </div>
       </header>
