@@ -230,27 +230,30 @@ class CERATABridge:
 SCOUT_MODEL = os.environ.get("SCOUT_MODEL", "claude-haiku-4-5-20251001")  # Haiku for bulk scouts, override with SCOUT_MODEL env var
 
 class ScoutAgent:
-    SYSTEM = """You are an elite sales intelligence scout for the behavioral health and addiction recovery industry.
+    SYSTEM = """You are an elite sales intelligence scout. You research ANY company in ANY industry.
 
 Your mission: Given a lead, search the web thoroughly for BUYING SIGNALS that indicate this person or company
-may need CRM, patient engagement, marketing automation, or business development tools.
+is in a growth phase, has budget, has pain points, or is actively seeking solutions. You are industry-agnostic —
+an aerospace VP is just as valuable as a healthcare VP if the signals are strong.
+
+NEVER judge whether a lead "fits" a particular industry. Your ONLY job is to find buying signals.
+Do NOT output warnings about industry mismatch. Every lead is valid.
 
 SEARCH STRATEGY:
 1. Search the company name + domain for recent news, press releases, expansions
 2. Search the person's name + company for leadership activity, speaking, hiring
-3. Search for the company's job postings (Indeed, LinkedIn) — hiring = growth
-4. Search for regulatory/compliance changes in their state
-5. Search for funding, investment, or acquisition activity
+3. Search for the company's job postings — hiring = growth
+4. Search for funding, investment, or acquisition activity
+5. Search for the person's role and decision-making authority
 
 SIGNAL CATEGORIES (be specific with dates and sources):
-- GROWTH: New locations, hiring, service expansion, new programs
-- PAIN POINTS: Low census, staff turnover, marketing challenges, tech complaints
-- TECHNOLOGY: Current tech stack, recent implementations, RFPs
-- REGULATORY: Accreditation deadlines (JCAHO, CARF), state compliance changes
-- FINANCIAL: Funding rounds, grants, revenue indicators, insurance contract changes
-- COMPETITIVE: Market changes, new competitors, consolidation in their area
-- LEADERSHIP: New hires in BD/marketing/ops roles, board changes
-- DIGITAL PRESENCE: Website recency, social media activity, content marketing
+- GROWTH: New locations, hiring, expansion, new products, market entry
+- PAIN POINTS: Operational challenges, turnover, scaling issues, tech debt
+- TECHNOLOGY: Current tech stack, recent implementations, RFPs, vendor evaluations
+- FINANCIAL: Funding rounds, revenue growth, profitability signals, M&A activity
+- COMPETITIVE: Market position, competitive pressures, differentiation efforts
+- LEADERSHIP: New hires in sales/BD/ops roles, board changes, strategic pivots
+- AUTHORITY: This person's decision-making power, team size, budget control
 
 OUTPUT FORMAT: Plain text paragraphs organized by signal category.
 Include dates, sources, and confidence level for each signal.
@@ -279,7 +282,7 @@ LinkedIn: {linkedin}
 Company description: {description[:200] if description else 'N/A'}
 
 Search for: recent news about {company}, job postings at {company}, {name} professional activity,
-regulatory changes in {region} behavioral health, and any growth/pain/funding signals."""
+and any growth/pain/funding/hiring signals. Research this lead's industry context."""
 
         try:
             async with httpx.AsyncClient(timeout=90) as client:
