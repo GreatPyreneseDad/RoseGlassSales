@@ -238,6 +238,7 @@ export default function Home(){
   useEffect(()=>{const t=localStorage.getItem('rgs_token');if(t){api('/auth/me').then(r=>r.ok?r.json():Promise.reject()).then(u=>{setUser(u);setAuthed(true);load();}).catch(()=>{localStorage.removeItem('rgs_token');});}fetch('/api/auth/me').then(r=>{if(r.status===404||r.status===405){setAuthed(true);load();}}).catch(()=>{});},[]);
   useEffect(()=>{endRef.current?.scrollIntoView({behavior:'smooth'});},[msgs]);
   useEffect(()=>{focusEndRef.current?.scrollIntoView({behavior:'smooth'});},[focusMsgs]);
+  useEffect(()=>{if(!authed)return;const iv=setInterval(()=>{api('/stats').then(r=>r.json()).then(setStats).catch(()=>{});},30000);return()=>clearInterval(iv);},[authed]);
   const handleLogin=(u:any)=>{setUser(u);setAuthed(true);load();};
   const handleLogout=()=>{api('/auth/logout',{method:'POST'});localStorage.removeItem('rgs_token');setAuthed(false);setUser(null);};
   const load=()=>{api('/stats').then(r=>r.json()).then(setStats).catch(()=>{});fetchLeads();};
