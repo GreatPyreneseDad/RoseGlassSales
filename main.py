@@ -115,16 +115,24 @@ class CERATABridge:
     }
 
     F_SIGNALS = {
-        "mental health": 0.8, "behavioral health": 0.8,
-        "substance abuse": 0.8, "addiction": 0.8, "recovery": 0.8,
-        "treatment": 0.7, "rehab": 0.8, "sober living": 0.7,
-        "outpatient": 0.7, "inpatient": 0.7, "residential": 0.7,
-        "detox": 0.7, "mat": 0.6, "medication assisted": 0.7,
-        "telehealth": 0.6, "virtual care": 0.6,
-        "small business": 0.5, "startup": 0.4, "growing practice": 0.6,
-        "group practice": 0.6, "multi-site": 0.7,
-        "crm": 0.7, "hubspot": 0.8, "salesforce": 0.6,
-        "ehr": 0.6, "emr": 0.6, "kipu": 0.7, "sunwave": 0.7,
+        # Buying ecosystem signals — industry agnostic
+        "crm": 0.7, "hubspot": 0.8, "salesforce": 0.6, "pipedrive": 0.6,
+        "sales team": 0.7, "sales ops": 0.7, "revenue operations": 0.7,
+        "lead generation": 0.8, "pipeline": 0.7, "quota": 0.6,
+        "b2b": 0.6, "enterprise sales": 0.7, "smb": 0.5,
+        "saas": 0.7, "software": 0.5, "platform": 0.5,
+        "growth": 0.5, "scaling": 0.6, "expansion": 0.6,
+        "series a": 0.6, "series b": 0.7, "funded": 0.6, "raised": 0.6,
+        "ipo": 0.5, "revenue": 0.5, "arr": 0.7, "mrr": 0.7,
+        "startup": 0.4, "growing": 0.5, "hiring": 0.5,
+        "multi-site": 0.6, "multiple locations": 0.6,
+        "partnership": 0.5, "integration": 0.5, "api": 0.4,
+        # Company maturity signals
+        "inc. 5000": 0.7, "inc 5000": 0.7, "fast-growing": 0.6,
+        "market leader": 0.6, "industry leader": 0.6,
+        # Decision infrastructure
+        "vp of sales": 0.7, "sales leader": 0.7, "head of sales": 0.7,
+        "business development": 0.6, "account executive": 0.5,
     }
 
     @classmethod
@@ -182,10 +190,14 @@ class CERATABridge:
 
     @classmethod
     def _boost_industry(cls, f, industry):
+        """Boost fit based on company having a sales-oriented industry, not a specific vertical."""
         if not industry: return f
         ind = industry.lower()
-        if any(x in ind for x in ["mental health","behavioral","substance","addiction"]): return min(1.0, f+0.35)
-        if any(x in ind for x in ["hospital","health care","medical"]): return min(1.0, f+0.15)
+        # Companies in sales-heavy industries get a fit boost — they understand buying tools
+        if any(x in ind for x in ["software","technology","saas","information tech"]): return min(1.0, f+0.15)
+        if any(x in ind for x in ["sales","marketing","consulting","professional service"]): return min(1.0, f+0.20)
+        if any(x in ind for x in ["health","medical","pharma","biotech"]): return min(1.0, f+0.10)
+        if any(x in ind for x in ["financial","insurance","real estate"]): return min(1.0, f+0.10)
         return f
 
     @classmethod

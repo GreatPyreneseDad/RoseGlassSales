@@ -44,7 +44,7 @@ function dimContext(dim: string, val: number, lead: Lead): string {
   if (dim === 'psi') { return val >= 0.6 ? 'Active buying signals' : val >= 0.3 ? 'Moderate need signals' : 'No buying motion detected'; }
   if (dim === 'rho') { const t = (lead.title||'').toLowerCase(); if (t.match(/owner|ceo|founder|president/)) return 'Owner — full buying power'; if (t.match(/chief|cmo|cto/)) return 'C-suite — strong authority'; if (t.match(/vp|vice/)) return 'VP — can influence decisions'; if (val < 0.4) return 'May lack budget power'; return 'Decision authority detected'; }
   if (dim === 'q') { return val >= 0.5 ? 'Strong urgency signals' : val >= 0.2 ? 'Moderate time pressure' : 'No time pressure'; }
-  if (dim === 'f') { const ind = (lead.company_industry||'').toLowerCase(); if (ind.match(/mental|behavioral|recovery|addiction/)) return 'Recovery vertical — perfect ICP'; if (ind.match(/health|hospital/)) return 'Healthcare — good fit'; return 'Moderate ICP alignment'; }
+  if (dim === 'f') { if (val >= 0.7) return 'Strong ecosystem fit'; if (val >= 0.4) return 'Moderate fit — signals present'; return 'Low fit signals'; }
   return '';
 }
 
