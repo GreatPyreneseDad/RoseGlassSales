@@ -686,6 +686,15 @@ async def upload_csv(file: UploadFile = File(...), authorization: str = Header(N
     if not rows:
         raise HTTPException(400, "No valid rows found")
 
+    # Normalize: ensure all rows have identical keys (Supabase batch requires this)
+    all_keys = set()
+    for row in rows:
+        all_keys.update(row.keys())
+    for row in rows:
+        for key in all_keys:
+            if key not in row:
+                row[key] = None
+
     # Create import batch
     async with httpx.AsyncClient(timeout=30) as client:
         batch_resp = await client.post(f"{SUPABASE_URL}/rest/v1/import_batches", headers=HEADERS_SB,
@@ -900,6 +909,11 @@ CHAT_TOOLS = [
         },
     },
     {
+        "name": "scout_all",
+        "description": "Scout ALL unscouted leads for this user. Triggers scouting for all leads that haven't been researched yet. Use when the user says 'scout my leads' or 'scout everything' or 'scout the unscored leads'.",
+        "input_schema": {"type": "object", "properties": {"limit": {"type": "integer", "description": "Max leads to scout (default 50)"}}, "required": []},
+    },
+    {
         "name": "rank_lead",
         "description": "Re-run CERATA dimensional analysis on a lead after new signals are added.",
         "input_schema": {
@@ -967,6 +981,19 @@ async def _exec_tool(name: str, inp: Dict, user_id: str = None) -> str:
                     json={**signals, "buying_signals_updated_at": now,
                           "web_signals_updated_at": now, "updated_at": now})
             return f"Scouted {lead['full_name']} at {lead['company']}. Signals written to database.\nSignals: {signals['buying_signals'][:500]}"
+
+        elif name == "scout_all":
+            limit = inp.get("limit", 50)
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(
+                    f"{SUPABASE_URL}/rest/v1/leads?buying_signals=is.null&user_id=eq.{user_id}&order=rank_score.desc.nullslast&limit={limit}",
+                    headers=HEADERS_SB)
+                unscouted = resp.json() if resp.status_code == 200 else []
+            if not unscouted:
+                return "All leads are already scouted."
+            # Launch scouting as background task so chat doesn't block
+            asyncio.create_task(_scout_user(user_id, min(limit, len(unscouted))))
+            return f"Scouting {len(unscouted)} unscouted leads in the background. They will appear with buying signals and scores within a few minutes. Refresh the Leads tab to see progress."
 
         elif name == "rank_lead":
             lead_id = inp["lead_id"]
@@ -1197,65 +1224,83 @@ SCOUT_INTERVAL = int(os.environ.get("SCOUT_INTERVAL_SECONDS", "300"))  # 5 min d
 SCOUT_BATCH = int(os.environ.get("SCOUT_BATCH_SIZE", "5"))
 SCOUT_ENABLED = os.environ.get("SCOUT_ENABLED", "true").lower() == "true"
 
+async def _scout_user(user_id: str, batch_size: int = 5):
+    """Scout one batch for a single user. Returns count scouted."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/leads?buying_signals=is.null&user_id=eq.{user_id}&order=rank_score.desc.nullslast&limit={batch_size}",
+            headers=HEADERS_SB)
+        leads = resp.json() if resp.status_code == 200 else []
+
+    if not leads:
+        return 0
+
+    count = 0
+    for lead in leads:
+        try:
+            signals = await ScoutAgent.scout_lead(lead)
+            now = datetime.now(timezone.utc).isoformat()
+            async with httpx.AsyncClient(timeout=30) as client:
+                await client.patch(
+                    f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead['id']}",
+                    headers=HEADERS_SB,
+                    json={**signals, "buying_signals_updated_at": now,
+                          "web_signals_updated_at": now, "updated_at": now})
+
+                # Auto-rank
+                ld_resp = await client.get(
+                    f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead['id']}&select=id,buying_signals,web_signals,linkedin_summary,title,company_industry,company_size,company_description",
+                    headers=HEADERS_SB)
+                if ld_resp.json():
+                    ld = ld_resp.json()[0]
+                    analysis = CERATABridge.analyze(
+                        buying_signals=ld.get("buying_signals",""),
+                        web_signals=ld.get("web_signals",""),
+                        linkedin_summary=ld.get("linkedin_summary",""),
+                        title=ld.get("title",""),
+                        company_industry=ld.get("company_industry",""),
+                        company_size=ld.get("company_size") or 0,
+                        company_description=ld.get("company_description",""))
+                    await client.patch(
+                        f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead['id']}",
+                        headers=HEADERS_SB,
+                        json={**analysis, "ranked_at": now, "updated_at": now})
+
+            logger.info(f"Scout: {lead.get('full_name','')} at {lead.get('company','')} [user={user_id[:8]}]")
+            count += 1
+        except Exception as e:
+            logger.error(f"Scout failed: {lead.get('full_name','')}: {e}")
+    return count
+
+
 async def _background_scout_loop():
-    """Continuously scout unscouted leads in the background."""
-    await asyncio.sleep(30)  # Wait for app to fully start
+    """Per-user concurrent scouting. Each user gets their own scout lane."""
+    await asyncio.sleep(30)
     logger.info(f"Background scout started: batch={SCOUT_BATCH}, interval={SCOUT_INTERVAL}s, model={SCOUT_MODEL}")
 
     while True:
         try:
+            # Get all users with unscouted leads
             async with httpx.AsyncClient(timeout=30) as client:
-                # Check how many unscouted remain
                 resp = await client.get(
-                    f"{SUPABASE_URL}/rest/v1/leads?buying_signals=is.null&select=id&limit=1",
+                    f"{SUPABASE_URL}/rest/v1/leads?buying_signals=is.null&select=user_id&limit=200",
                     headers=HEADERS_SB)
-                unscouted = resp.json()
+                rows = resp.json() if resp.status_code == 200 else []
 
-            if not unscouted:
+            user_ids = list(set(r["user_id"] for r in rows if r.get("user_id")))
+
+            if not user_ids:
                 logger.info("Background scout: all leads scouted. Sleeping 1 hour.")
                 await asyncio.sleep(3600)
                 continue
 
-            # Scout a batch
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.get(
-                    f"{SUPABASE_URL}/rest/v1/leads?buying_signals=is.null&order=rank_score.desc.nullslast&limit={SCOUT_BATCH}",
-                    headers=HEADERS_SB)
-                leads = resp.json()
+            # Scout one batch per user CONCURRENTLY
+            logger.info(f"Background scout: {len(user_ids)} users with unscouted leads")
+            tasks = [_scout_user(uid, SCOUT_BATCH) for uid in user_ids]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            for lead in leads:
-                try:
-                    signals = await ScoutAgent.scout_lead(lead)
-                    now = datetime.now(timezone.utc).isoformat()
-                    async with httpx.AsyncClient(timeout=30) as client:
-                        await client.patch(
-                            f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead['id']}",
-                            headers=HEADERS_SB,
-                            json={**signals, "buying_signals_updated_at": now,
-                                  "web_signals_updated_at": now, "updated_at": now})
-
-                        # Auto-rank
-                        ld_resp = await client.get(
-                            f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead['id']}&select=id,buying_signals,web_signals,linkedin_summary,title,company_industry,company_size,company_description",
-                            headers=HEADERS_SB)
-                        if ld_resp.json():
-                            ld = ld_resp.json()[0]
-                            analysis = CERATABridge.analyze(
-                                buying_signals=ld.get("buying_signals",""),
-                                web_signals=ld.get("web_signals",""),
-                                linkedin_summary=ld.get("linkedin_summary",""),
-                                title=ld.get("title",""),
-                                company_industry=ld.get("company_industry",""),
-                                company_size=ld.get("company_size") or 0,
-                                company_description=ld.get("company_description",""))
-                            await client.patch(
-                                f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead['id']}",
-                                headers=HEADERS_SB,
-                                json={**analysis, "ranked_at": now, "updated_at": now})
-
-                    logger.info(f"Scout: {lead.get('full_name','')} at {lead.get('company','')}")
-                except Exception as e:
-                    logger.error(f"Scout failed: {lead.get('full_name','')}: {e}")
+            total = sum(r for r in results if isinstance(r, int))
+            logger.info(f"Background scout cycle: {total} leads scouted across {len(user_ids)} users")
 
         except Exception as e:
             logger.error(f"Background scout error: {e}")
