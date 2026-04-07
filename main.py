@@ -996,6 +996,7 @@ CHAT_TOOLS = [
                 "user_status": {"type": "string", "description": "Status: new, contacted, qualified, nurture, dead"},
                 "user_rating": {"type": "integer", "description": "1-5 star rating"},
                 "outreach_status": {"type": "string", "description": "none, emailed, called, meeting_scheduled, proposal_sent"},
+                "qualification_tier": {"type": "string", "description": "hot, warm, cold, disqualified — use to reclassify a lead"},
             },
             "required": ["lead_id"],
         },
@@ -1072,9 +1073,10 @@ async def _exec_tool(name: str, inp: Dict, user_id: str = None) -> str:
                 data["buying_signals_updated_at"] = now
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.patch(
-                    f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead_id}",
+                    f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead_id}&user_id=eq.{user_id}",
                     headers=HEADERS_SB, json=data)
-                resp.raise_for_status()
+                if resp.status_code >= 400:
+                    return f"Error updating lead: {resp.text[:200]}"
                 result = resp.json()
             return f"Updated lead {lead_id}: {list(data.keys())}"
 
