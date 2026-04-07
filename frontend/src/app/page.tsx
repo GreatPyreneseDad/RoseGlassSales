@@ -220,6 +220,58 @@ function CsvDropZone({onUploaded}:{onUploaded:(m:string)=>void}) {
 function ActionBtn({label,color,disabled,onClick}:{label:string;color:string;disabled:boolean;onClick:()=>void}){return<button onClick={onClick} disabled={disabled} style={{padding:'5px 12px',borderRadius:6,border:`1px solid ${color}33`,background:disabled?'#0f172a':`${color}10`,color:disabled?'#475569':color,fontSize:11,cursor:disabled?'default':'pointer',fontWeight:600}}>{label}</button>;}
 function QuickChips({onSend}:{onSend:(m:string)=>void}){return(<div style={{display:'flex',gap:5,marginBottom:6,flexWrap:'wrap'}}>{['Summarize call','Draft follow-up email','Re-rank this lead','What should I ask next?'].map(c=>(<button key={c} onClick={()=>onSend(c)} style={{padding:'3px 10px',borderRadius:12,border:'1px solid #1e293b',background:'transparent',color:'#64748b',fontSize:10,cursor:'pointer'}}>{c}</button>))}</div>);}
 
+function LensPanel({onClose}:{onClose:()=>void}) {
+  const[name,setName]=useState('');const[desc,setDesc]=useState('');
+  const[props,setProps]=useState('');const[notThis,setNotThis]=useState('');
+  const[terms,setTerms]=useState('');const[tone,setTone]=useState('');
+  const[saved,setSaved]=useState(false);const[loading,setLoading]=useState(true);
+
+  useEffect(()=>{api('/sales-lens').then(r=>r.json()).then(d=>{
+    setName(d.product_name||'');setDesc(d.product_description||'');
+    setProps((d.value_props||[]).join(', '));setNotThis((d.not_this||[]).join(', '));
+    setTerms((d.industry_terms||[]).join(', '));setTone(d.tone||'');
+    setLoading(false);
+  }).catch(()=>setLoading(false));},[]);
+
+  const save=async()=>{
+    const split=(s:string)=>s.split(',').map(x=>x.trim()).filter(Boolean);
+    await apiJson('/sales-lens',{
+      product_name:name,product_description:desc,
+      value_props:split(props),not_this:split(notThis),
+      industry_terms:split(terms),tone,
+    });setSaved(true);setTimeout(()=>setSaved(false),2000);
+  };
+
+  const inp:React.CSSProperties={padding:'8px 10px',borderRadius:6,border:'1px solid #1e293b',background:'#020617',color:'#f1f5f9',fontSize:12,outline:'none',width:'100%'};
+  const lbl:React.CSSProperties={fontSize:10,color:'#64748b',textTransform:'uppercase',letterSpacing:1,fontWeight:600,marginBottom:4};
+  const hint:React.CSSProperties={fontSize:10,color:'#475569',marginTop:2};
+
+  return(
+    <div style={{position:'fixed',inset:0,zIndex:300,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,0.6)'}}>
+      <div style={{width:480,maxHeight:'85vh',overflowY:'auto',background:'#0a0f1a',borderRadius:16,border:'1px solid #1e293b',padding:24}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+          <div>
+            <h2 style={{margin:0,fontSize:18,color:'#f1f5f9'}}>Sales Lens</h2>
+            <p style={{margin:'4px 0 0',fontSize:11,color:'#64748b'}}>Define what you sell so the AI frames every conversation correctly</p>
+          </div>
+          <button onClick={onClose} style={{background:'#1e293b',border:'none',color:'#94a3b8',width:28,height:28,borderRadius:6,cursor:'pointer'}}>✕</button>
+        </div>
+        {loading?<div style={{color:'#475569',textAlign:'center',padding:20}}>Loading...</div>:(
+          <div style={{display:'flex',flexDirection:'column',gap:14}}>
+            <div><div style={lbl}>Product Name</div><input value={name} onChange={e=>setName(e.target.value)} placeholder="Team Recovery" style={inp}/></div>
+            <div><div style={lbl}>What It Is</div><textarea value={desc} onChange={e=>setDesc(e.target.value)} placeholder="Alumni program and engagement platform for treatment centers. Helps facilities track and support patients after discharge." rows={3} style={{...inp,resize:'vertical'}}/><div style={hint}>The AI will use this to frame every lead conversation.</div></div>
+            <div><div style={lbl}>Value Propositions</div><input value={props} onChange={e=>setProps(e.target.value)} placeholder="Alumni engagement tracking, Outcome reporting, Referral network" style={inp}/><div style={hint}>Comma-separated. What your product actually delivers.</div></div>
+            <div><div style={lbl}>NOT This (Critical)</div><input value={notThis} onChange={e=>setNotThis(e.target.value)} placeholder="NOT an EHR, NOT billing software, NOT clinical software" style={inp}/><div style={hint}>Comma-separated. What the AI should NEVER position your product as. This prevents misframing.</div></div>
+            <div><div style={lbl}>Industry Terms</div><input value={terms} onChange={e=>setTerms(e.target.value)} placeholder="alumni program, recovery engagement, aftercare, post-discharge" style={inp}/><div style={hint}>Comma-separated. The language your market uses.</div></div>
+            <div><div style={lbl}>Tone</div><input value={tone} onChange={e=>setTone(e.target.value)} placeholder="consultative, peer-to-peer, recovery-focused" style={inp}/><div style={hint}>How should the AI sound when talking about your product?</div></div>
+            <button onClick={save} style={{width:'100%',padding:'10px 0',borderRadius:8,border:'none',background:saved?'#34d39930':'linear-gradient(135deg,#7c3aed,#ec4899)',color:saved?'#34d399':'#fff',fontWeight:600,cursor:'pointer',fontSize:13,transition:'all 0.2s'}}>{saved?'✓ Saved':'Save Sales Lens'}</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ICPPanel({onClose}:{onClose:()=>void}) {
   const[titles,setTitles]=useState('');const[industries,setIndustries]=useState('');
   const[regions,setRegions]=useState('');const[keywords,setKeywords]=useState('');
@@ -299,6 +351,7 @@ export default function Home(){
   const[view,setView]=useState<'chat'|'leads'>('chat');const[leads,setLeads]=useState<Lead[]>([]);const[stats,setStats]=useState<Stats|null>(null);
   const[focusLead,setFocusLead]=useState<Lead|null>(null);
   const[showICP,setShowICP]=useState(false);
+  const[showLens,setShowLens]=useState(false);
   const[msgs,setMsgs]=useState<ChatMsg[]>([{role:'assistant',content:'Rose Glass Sales Intelligence online. Ask me about your leads, or switch to Leads and hit Focus to enter call mode.'}]);
   const[focusMsgs,setFocusMsgs]=useState<ChatMsg[]>([]);const[input,setInput]=useState('');
   const[busy,setBusy]=useState(false);const[scouting,setScouting]=useState(false);const[scoutingWarm,setScoutingWarm]=useState(false);const[ranking,setRanking]=useState(false);const[filter,setFilter]=useState<string|null>(null);
@@ -322,6 +375,7 @@ export default function Home(){
   // ─── CALL MODE ─────────────────────────────────────────
   if(focusLead)return(
     <div style={{height:'100vh',display:'flex',flexDirection:'column',background:'#020617',color:'#e2e8f0',fontFamily:"'DM Sans',sans-serif"}}>
+      {showLens&&<LensPanel onClose={()=>setShowLens(false)}/>}
       {showICP&&<ICPPanel onClose={()=>setShowICP(false)}/>}
       {showSettings&&<SettingsPanel user={user} onClose={()=>setShowSettings(false)} onLogout={handleLogout}/>}
       <div style={{display:'flex',alignItems:'center',padding:'10px 20px',borderBottom:'1px solid #111827',background:'#060a14',flexShrink:0}}>
@@ -347,6 +401,7 @@ export default function Home(){
   // ─── MAIN VIEW ─────────────────────────────────────────
   return(
     <div style={{height:'100vh',display:'flex',flexDirection:'column',background:'#020617',color:'#e2e8f0',fontFamily:"'DM Sans',-apple-system,sans-serif"}}>
+      {showLens&&<LensPanel onClose={()=>setShowLens(false)}/>}
       {showICP&&<ICPPanel onClose={()=>setShowICP(false)}/>}
       {showSettings&&<SettingsPanel user={user} onClose={()=>setShowSettings(false)} onLogout={handleLogout}/>}
       <header style={{display:'flex',alignItems:'center',padding:'10px 20px',borderBottom:'1px solid #111827',background:'#060a14'}}>
@@ -356,6 +411,7 @@ export default function Home(){
           <ActionBtn label={scouting?'Scouting…':'Scout 10'} color="#8b5cf6" disabled={scouting} onClick={scout}/>
           <ActionBtn label={scoutingWarm?'Scouting…':'Scout Warm'} color="#f59e0b" disabled={scoutingWarm} onClick={scoutWarm}/>
           <ActionBtn label={ranking?'Ranking…':'Rank All'} color="#06b6d4" disabled={ranking} onClick={rank}/>
+          <button onClick={()=>setShowLens(true)} style={{padding:'5px 10px',borderRadius:6,border:'1px solid #ec489933',background:'#ec489908',color:'#ec4899',fontSize:11,cursor:'pointer',fontWeight:600}} title="Sales Lens">Lens</button>
           <button onClick={()=>setShowICP(true)} style={{padding:'5px 10px',borderRadius:6,border:'1px solid #7c3aed33',background:'#7c3aed08',color:'#a78bfa',fontSize:11,cursor:'pointer',fontWeight:600}} title="Ideal Customer Profile">ICP</button>
           <button onClick={()=>setShowSettings(true)} style={{padding:'5px 10px',borderRadius:6,border:'1px solid #1e293b',background:'transparent',color:'#64748b',fontSize:14,cursor:'pointer'}} title="Settings">⚙</button>
         </div>

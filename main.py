@@ -927,7 +927,7 @@ class ChatRequest(BaseModel):
     message: str
     history: List[Dict[str, str]] = []
 
-CHAT_SYSTEM = """You are the Rose Glass Sales Intelligence Agent. You have REAL tools to query and modify the leads database.
+CHAT_SYSTEM_BASE = """You are the Rose Glass Sales Intelligence Agent. You have REAL tools to query and modify the leads database.
 
 IMPORTANT: When the user asks you to update a lead, scout a lead, or search for leads, you MUST use the tools provided. 
 Do NOT just describe what you would do — actually call the tools.
@@ -941,6 +941,29 @@ Dimensions (CERATA framework):
 - qualification_tier: hot/warm/cold/disqualified
 
 Be direct. Use dimensional analysis to explain reasoning."""
+
+
+def _build_chat_system(sales_lens: dict = None) -> str:
+    """Build the chat system prompt with user's sales lens context."""
+    base = CHAT_SYSTEM_BASE
+    if not sales_lens or not sales_lens.get("product_name"):
+        return base
+    
+    lens_context = "\n\nUSER'S SALES CONTEXT — frame ALL advice through this lens:"
+    lens_context += f"\nProduct: {sales_lens.get('product_name', '')}"
+    if sales_lens.get('product_description'):
+        lens_context += f"\nWhat it is: {sales_lens['product_description']}"
+    if sales_lens.get('value_props'):
+        lens_context += f"\nValue props: {', '.join(sales_lens['value_props'])}"
+    if sales_lens.get('not_this'):
+        lens_context += f"\nCRITICAL — NOT this: {', '.join(sales_lens['not_this'])}"
+    if sales_lens.get('industry_terms'):
+        lens_context += f"\nUse these terms: {', '.join(sales_lens['industry_terms'])}"
+    if sales_lens.get('tone'):
+        lens_context += f"\nTone: {sales_lens['tone']}"
+    lens_context += "\n\nALWAYS frame buying signals, recommendations, and outreach in terms of the user's product — NOT generic software categories."
+    
+    return base + lens_context
 
 CHAT_TOOLS = [
     {
@@ -1125,7 +1148,7 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post("https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
-                json={"model": "claude-sonnet-4-20250514", "max_tokens": 4096, "system": CHAT_SYSTEM,
+                json={"model": "claude-sonnet-4-20250514", "max_tokens": 4096, "system": chat_system,
                       "tools": CHAT_TOOLS, "messages": messages})
             resp.raise_for_status()
             data = resp.json()
@@ -1171,7 +1194,7 @@ class FocusChatRequest(BaseModel):
     lead_id: str
     history: List[Dict[str, str]] = []
 
-FOCUS_SYSTEM = """You are the Rose Glass Sales Intelligence Agent in CALL MODE — focused on a single lead.
+FOCUS_SYSTEM_BASE = """You are the Rose Glass Sales Intelligence Agent in CALL MODE — focused on a single lead.
 
 The user is on a live call or preparing for one. Your job:
 1. Before the call: provide intel, suggested openers, talking points
@@ -1189,6 +1212,24 @@ After significant new intel, call rank_lead to re-compute dimensions.
 
 Be concise — the user is multitasking on a call. Lead with the actionable insight."""
 
+def _build_focus_system(sales_lens: dict = None) -> str:
+    """Build the focus chat system prompt with user's sales lens."""
+    base = FOCUS_SYSTEM_BASE
+    if not sales_lens or not sales_lens.get("product_name"):
+        return base
+    
+    lens = "\n\nUSER'S PRODUCT — frame ALL call advice through this lens:"
+    lens += f"\nSelling: {sales_lens.get('product_name', '')} — {sales_lens.get('product_description', '')}"
+    if sales_lens.get('not_this'):
+        lens += f"\nNEVER position as: {', '.join(sales_lens['not_this'])}"
+    if sales_lens.get('value_props'):
+        lens += f"\nKey value: {', '.join(sales_lens['value_props'])}"
+    if sales_lens.get('tone'):
+        lens += f"\nTone: {sales_lens['tone']}"
+    
+    return base + lens
+
+
 @app.post("/api/chat/focus")
 async def focus_chat(req: FocusChatRequest, authorization: str = Header(None)):
     user = await get_current_user(authorization)
@@ -1203,6 +1244,7 @@ async def focus_chat(req: FocusChatRequest, authorization: str = Header(None)):
         raise HTTPException(404, "Lead not found")
     lead = leads[0]
 
+    sales_lens = await _get_user_sales_lens(user["user_id"])
     context = f"FOCUSED LEAD:\n{json.dumps(lead, indent=1)}"
     messages = [*req.history, {"role": "user", "content": f"{context}\n\nUser: {req.message}"}]
 
@@ -1213,7 +1255,7 @@ async def focus_chat(req: FocusChatRequest, authorization: str = Header(None)):
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post("https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
-                json={"model": "claude-sonnet-4-20250514", "max_tokens": 4096, "system": FOCUS_SYSTEM,
+                json={"model": "claude-sonnet-4-20250514", "max_tokens": 4096, "system": _build_focus_system(sales_lens),
                       "tools": CHAT_TOOLS, "messages": messages})
             resp.raise_for_status()
             data = resp.json()
@@ -1273,6 +1315,37 @@ async def save_icp(profile: ICPProfile, authorization: str = Header(None)):
             headers=HEADERS_SB,
             json={"icp_profile": profile.model_dump()})
     return {"saved": True, "profile": profile.model_dump()}
+
+
+# ─── Sales Lens ───────────────────────────────────────────
+
+class SalesLens(BaseModel):
+    product_name: str = ""
+    product_description: str = ""
+    value_props: List[str] = []
+    not_this: List[str] = []
+    industry_terms: List[str] = []
+    tone: str = ""
+
+@app.get("/api/sales-lens")
+async def get_sales_lens(authorization: str = Header(None)):
+    user = await get_current_user(authorization)
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/users?id=eq.{user['user_id']}&select=sales_lens",
+            headers=HEADERS_SB)
+        data = resp.json()
+    return data[0].get("sales_lens") or {} if data else {}
+
+@app.post("/api/sales-lens")
+async def save_sales_lens(lens: SalesLens, authorization: str = Header(None)):
+    user = await get_current_user(authorization)
+    async with httpx.AsyncClient(timeout=30) as client:
+        await client.patch(
+            f"{SUPABASE_URL}/rest/v1/users?id=eq.{user['user_id']}",
+            headers=HEADERS_SB,
+            json={"sales_lens": lens.model_dump()})
+    return {"saved": True, "lens": lens.model_dump()}
 
 # ─── Lead CRUD ────────────────────────────────────────────
 
@@ -1338,6 +1411,19 @@ async def _get_user_icp(user_id: str) -> dict:
                 headers=HEADERS_SB)
             data = resp.json() if resp.status_code == 200 else []
             return data[0].get("icp_profile") or {} if data else {}
+    except:
+        return {}
+
+
+async def _get_user_sales_lens(user_id: str) -> dict:
+    """Fetch the user's sales lens from Supabase."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{SUPABASE_URL}/rest/v1/users?id=eq.{user_id}&select=sales_lens",
+                headers=HEADERS_SB)
+            data = resp.json() if resp.status_code == 200 else []
+            return data[0].get("sales_lens") or {} if data else {}
     except:
         return {}
 
