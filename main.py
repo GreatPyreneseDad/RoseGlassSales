@@ -1261,8 +1261,29 @@ async def focus_chat(req: FocusChatRequest, authorization: str = Header(None)):
     lead = leads[0]
 
     sales_lens = await _get_user_sales_lens(user["user_id"])
-    context = f"FOCUSED LEAD:\n{json.dumps(lead, indent=1)}"
-    messages = [*req.history, {"role": "user", "content": f"{context}\n\nUser: {req.message}"}]
+    # Trim lead context to essential fields — full buying_signals can be huge
+    lead_summary = {
+        "full_name": lead.get("full_name"),
+        "title": lead.get("title"),
+        "company": lead.get("company"),
+        "email": lead.get("email"),
+        "phone": lead.get("phone_number1") or lead.get("mobile_phone1"),
+        "region": lead.get("region"),
+        "company_industry": lead.get("company_industry"),
+        "coherence_score": lead.get("coherence_score"),
+        "qualification_tier": lead.get("qualification_tier"),
+        "psi_intent": lead.get("psi_intent"),
+        "rho_authority": lead.get("rho_authority"),
+        "q_optimized": lead.get("q_optimized"),
+        "f_fit": lead.get("f_fit"),
+        "dimensional_fractures": lead.get("dimensional_fractures"),
+        "buying_signals": (lead.get("buying_signals") or "")[:1500],  # Cap at 1500 chars
+        "user_notes": (lead.get("user_notes") or "")[:500],
+    }
+    context = f"FOCUSED LEAD:\n{json.dumps(lead_summary, indent=1)}"
+    # Only keep last 6 history messages to prevent context overflow
+    recent_history = req.history[-6:] if req.history else []
+    messages = [*recent_history, {"role": "user", "content": f"{context}\n\nUser: {req.message}"}]
 
     # Agentic loop with tools
     max_iterations = 5
