@@ -1017,6 +1017,19 @@ CHAT_TOOLS = [
         "input_schema": {"type": "object", "properties": {"limit": {"type": "integer", "description": "Max leads to scout (default 50)"}}, "required": []},
     },
     {
+        "name": "draft_email",
+        "description": """Draft a follow-up email for a lead. ALWAYS use this tool when the user asks to draft, write, or compose an email. This tool does NOT draft immediately — it first asks the user essential questions to write from real context, not assumptions. The tool returns questions for the user to answer. Once they answer, call draft_email again with their answers to generate the email.""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "lead_name": {"type": "string", "description": "The lead's name"},
+                "context": {"type": "string", "description": "Any known context: what happened on the call, what they're interested in, objections raised"},
+                "user_answers": {"type": "string", "description": "The user's answers to the intake questions. Leave empty on first call — the tool will return questions. On second call, paste the user's answers here."},
+            },
+            "required": ["lead_name"],
+        },
+    },
+    {
         "name": "rank_lead",
         "description": "Re-run CERATA dimensional analysis on a lead after new signals are added.",
         "input_schema": {
@@ -1097,6 +1110,71 @@ async def _exec_tool(name: str, inp: Dict, user_id: str = None) -> str:
             # Launch scouting as background task so chat doesn't block
             asyncio.create_task(_scout_user(user_id, min(limit, len(unscouted))))
             return f"Scouting {len(unscouted)} unscouted leads in the background. They will appear with buying signals and scores within a few minutes. Refresh the Leads tab to see progress."
+
+        elif name == "draft_email":
+            lead_name = inp.get("lead_name", "")
+            context = inp.get("context", "")
+            user_answers = inp.get("user_answers", "")
+            
+            if not user_answers:
+                # First call — return intake questions
+                return f"""Before I draft this email, I need a few things from you:
+
+1. **What happened?** — One sentence on what you discussed or what prompted this email.
+2. **What did they say they want?** — Their specific interest, concern, or request.
+3. **What's the next step?** — What are you proposing? (demo, contract, another call, info send)
+4. **Your pricing** — What's the actual cost? (Don't want me making up numbers.)
+5. **Anything to avoid?** — Topics, competitors, or framing they wouldn't respond to.
+
+Answer these and I'll draft something that sounds like you wrote it."""
+            else:
+                # Second call — draft from real answers
+                # Get lead data for context
+                async with httpx.AsyncClient(timeout=30) as client:
+                    resp = await client.get(
+                        f"{SUPABASE_URL}/rest/v1/leads?full_name=ilike.%25{lead_name}%25&user_id=eq.{user_id}&limit=1",
+                        headers=HEADERS_SB)
+                    leads = resp.json() if resp.status_code == 200 else []
+                lead = leads[0] if leads else {}
+                
+                # Get sales lens
+                lens = await _get_user_sales_lens(user_id)
+                
+                prompt = f"""Draft a short follow-up email based on the user's REAL answers below. 
+
+LEAD: {lead.get('full_name', lead_name)} at {lead.get('company', 'their company')}
+TITLE: {lead.get('title', '')}
+
+USER'S ANSWERS TO INTAKE QUESTIONS:
+{user_answers}
+
+ADDITIONAL CONTEXT: {context}
+
+PRODUCT BEING SOLD: {lens.get('product_name', '')} — {lens.get('product_description', '')}
+NEVER POSITION AS: {', '.join(lens.get('not_this', []))}
+
+RULES:
+- Under 100 words. No fluff.
+- Reference ONE specific thing from the conversation — the thing THEY said, not what you researched.
+- Use the pricing THEY gave you. Never invent pricing.
+- Sound like a human who just got off the phone, not a marketing team.
+- No bold, no bullets, no formatting. Plain text email.
+- No "I hope this finds you well." No "It was great chatting." No "I wanted to follow up."
+- Start with their name and get to the point in the first sentence.
+- End with one specific action and a specific time.
+- Sign with just the user's name, no title block.
+
+Output ONLY the email. Subject line first, then body. Nothing else."""
+
+                async with httpx.AsyncClient(timeout=60) as client:
+                    resp = await client.post(
+                        "https://api.anthropic.com/v1/messages",
+                        headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
+                        json={"model": "claude-sonnet-4-20250514", "max_tokens": 512, "messages": [{"role": "user", "content": prompt}]})
+                    data = resp.json()
+                    email_text = "\n".join(b["text"] for b in data.get("content", []) if b.get("type") == "text")
+                
+                return email_text or "Could not generate email."
 
         elif name == "rank_lead":
             lead_id = inp["lead_id"]
