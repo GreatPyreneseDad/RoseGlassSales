@@ -239,12 +239,11 @@ an aerospace VP is just as valuable as a healthcare VP if the signals are strong
 NEVER judge whether a lead "fits" a particular industry. Your ONLY job is to find buying signals.
 Do NOT output warnings about industry mismatch. Every lead is valid.
 
-SEARCH STRATEGY:
-1. Search the company name + domain for recent news, press releases, expansions
-2. Search the person's name + company for leadership activity, speaking, hiring
-3. Search for the company's job postings — hiring = growth
-4. Search for funding, investment, or acquisition activity
-5. Search for the person's role and decision-making authority
+SEARCH STRATEGY (MAX 3 SEARCHES — be efficient):
+1. Search "[company name] news funding hiring 2025 2026" — get company signals in one query
+2. Search "[person name] [company]" — get their role, activity, authority
+3. Search "[company name] jobs" — only if first two searches lack growth signals
+DO NOT search more than 3 times. Combine keywords to get maximum signal per search.
 
 SIGNAL CATEGORIES (be specific with dates and sources):
 - GROWTH: New locations, hiring, expansion, new products, market entry
@@ -295,9 +294,9 @@ and any growth/pain/funding/hiring signals. Research this lead's industry contex
                     },
                     json={
                         "model": SCOUT_MODEL,
-                        "max_tokens": 2048,
+                        "max_tokens": 1024,
                         "system": cls.SYSTEM,
-                        "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+                        "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
                         "messages": [{"role": "user", "content": prompt}],
                     },
                 )
@@ -1223,8 +1222,8 @@ async def get_stats(authorization: str = Header(None)):
 
 # ─── Background Scout Scheduler ───────────────────────────
 
-SCOUT_INTERVAL = int(os.environ.get("SCOUT_INTERVAL_SECONDS", "300"))  # 5 min default
-SCOUT_BATCH = int(os.environ.get("SCOUT_BATCH_SIZE", "5"))
+SCOUT_INTERVAL = int(os.environ.get("SCOUT_INTERVAL_SECONDS", "60"))  # 5 min default
+SCOUT_BATCH = int(os.environ.get("SCOUT_BATCH_SIZE", "20"))
 SCOUT_ENABLED = os.environ.get("SCOUT_ENABLED", "true").lower() == "true"
 
 async def _scout_user(user_id: str, batch_size: int = 5):
