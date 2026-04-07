@@ -227,7 +227,8 @@ class CERATABridge:
 # SCOUT AGENT
 # ═══════════════════════════════════════════════════════════
 
-SCOUT_MODEL = os.environ.get("SCOUT_MODEL", "claude-haiku-4-5-20251001")  # Haiku for bulk scouts, override with SCOUT_MODEL env var
+SCOUT_MODEL = os.environ.get("SCOUT_MODEL", "claude-haiku-4-5-20251001")
+PERCEPTION_SEED_FILE_ID = os.environ.get("PERCEPTION_SEED_FILE_ID", "file_011CZpgkQXaWG5Bgi1tyavRq")  # Haiku for bulk scouts, override with SCOUT_MODEL env var
 
 class ScoutAgent:
     SYSTEM = """You are an elite sales intelligence scout. You research ANY company in ANY industry.
@@ -284,12 +285,19 @@ Search for: recent news about {company}, job postings at {company}, {name} profe
 and any growth/pain/funding/hiring signals. Research this lead's industry context."""
 
         try:
+            # Build message content — attach perception seed if available
+            msg_content = []
+            if PERCEPTION_SEED_FILE_ID:
+                msg_content.append({"type": "document", "source": {"type": "file", "file_id": PERCEPTION_SEED_FILE_ID}})
+            msg_content.append({"type": "text", "text": prompt})
+
             async with httpx.AsyncClient(timeout=90) as client:
                 resp = await client.post(
                     "https://api.anthropic.com/v1/messages",
                     headers={
                         "x-api-key": ANTHROPIC_API_KEY,
                         "anthropic-version": "2023-06-01",
+                        "anthropic-beta": "files-api-2025-04-14",
                         "Content-Type": "application/json",
                     },
                     json={
@@ -297,7 +305,7 @@ and any growth/pain/funding/hiring signals. Research this lead's industry contex
                         "max_tokens": 1024,
                         "system": cls.SYSTEM,
                         "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
-                        "messages": [{"role": "user", "content": prompt}],
+                        "messages": [{"role": "user", "content": msg_content}],
                     },
                 )
                 resp.raise_for_status()
