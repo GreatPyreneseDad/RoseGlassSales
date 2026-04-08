@@ -376,7 +376,7 @@ Frame buying signals in terms of how they relate to what the user sells."""
                     },
                     json={
                         "model": SCOUT_MODEL,
-                        "max_tokens": 1024,
+                        "max_tokens": int(os.environ.get("SCOUT_MAX_TOKENS", "1024")),
                         "system": cls.SYSTEM,
                         "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
                         "messages": [{"role": "user", "content": msg_content}],
