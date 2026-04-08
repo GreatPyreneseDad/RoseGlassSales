@@ -322,7 +322,7 @@ Include dates, sources, and confidence level for each signal.
 If nothing found, say "No significant buying signals detected" — do NOT fabricate."""
 
     @classmethod
-    async def scout_lead(cls, lead: Dict) -> Dict[str, str]:
+    async def scout_lead(cls, lead: Dict, sales_lens: Dict = None) -> Dict[str, str]:
         name = lead.get("full_name", "")
         company = lead.get("company", "")
         title = lead.get("title", "")
@@ -345,6 +345,18 @@ Company description: {description[:200] if description else 'N/A'}
 
 Search for: recent news about {company}, job postings at {company}, {name} professional activity,
 and any growth/pain/funding/hiring signals. Research this lead's industry context."""
+
+        # Inject sales lens context if available
+        if sales_lens and sales_lens.get("product_name"):
+            lens_inject = f"""
+
+SALES CONTEXT — Frame your analysis through this lens:
+The user sells: {sales_lens.get('product_name', '')} — {sales_lens.get('product_description', '')}
+Key value: {', '.join(sales_lens.get('value_props', []))}
+{('NEVER frame as: ' + ', '.join(sales_lens.get('not_this', []))) if sales_lens.get('not_this') else ''}
+Look for signals that indicate this lead could benefit from or would buy this specific product.
+Frame buying signals in terms of how they relate to what the user sells."""
+            prompt += lens_inject
 
         try:
             # Build message content — attach perception seed if available
@@ -829,7 +841,8 @@ async def run_scouts(limit: int = 20, tier: Optional[str] = None, rescout: bool 
     errors = []
     for i in range(0, len(leads), 5):
         batch = leads[i:i+5]
-        results = await asyncio.gather(*[ScoutAgent.scout_lead(l) for l in batch], return_exceptions=True)
+        lens = await _get_user_sales_lens(user["user_id"])
+        results = await asyncio.gather(*[ScoutAgent.scout_lead(l, sales_lens=lens) for l in batch], return_exceptions=True)
         async with httpx.AsyncClient(timeout=30) as client:
             for lead, result in zip(batch, results):
                 if isinstance(result, Exception):
@@ -1018,6 +1031,11 @@ CHAT_TOOLS = [
         "input_schema": {"type": "object", "properties": {"limit": {"type": "integer", "description": "Max leads to scout (default 50)"}}, "required": []},
     },
     {
+        "name": "rescout_all",
+        "description": "Re-scout ALL leads that have already been scouted, using the user's current Sales Lens. Use when the user says 'rescout my leads', 're-research', or 'scout again through my lens'. This overwrites existing buying signals with fresh research framed through the user's product lens.",
+        "input_schema": {"type": "object", "properties": {"limit": {"type": "integer", "description": "Max leads to rescout (default 50)"}}, "required": []},
+    },
+    {
         "name": "draft_email",
         "description": """Draft a follow-up email for a lead. ALWAYS use this tool when the user asks to draft, write, or compose an email. This tool does NOT draft immediately — it first asks the user essential questions to write from real context, not assumptions. The tool returns questions for the user to answer. Once they answer, call draft_email again with their answers to generate the email.""",
         "input_schema": {
@@ -1090,7 +1108,8 @@ async def _exec_tool(name: str, inp: Dict, user_id: str = None) -> str:
                 if not leads:
                     return "Lead not found"
                 lead = leads[0]
-            signals = await ScoutAgent.scout_lead(lead)
+            lens = await _get_user_sales_lens(user_id)
+            signals = await ScoutAgent.scout_lead(lead, sales_lens=lens)
             now = datetime.now(timezone.utc).isoformat()
             async with httpx.AsyncClient(timeout=30) as client:
                 await client.patch(
@@ -1112,6 +1131,24 @@ async def _exec_tool(name: str, inp: Dict, user_id: str = None) -> str:
             # Launch scouting as background task so chat doesn't block
             asyncio.create_task(_scout_user(user_id, min(limit, len(unscouted))))
             return f"Scouting {len(unscouted)} unscouted leads in the background. They will appear with buying signals and scores within a few minutes. Refresh the Leads tab to see progress."
+
+        elif name == "rescout_all":
+            limit = inp.get("limit", 50)
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(
+                    f"{SUPABASE_URL}/rest/v1/leads?buying_signals=not.is.null&user_id=eq.{user_id}&order=coherence_score.desc&limit={limit}&select=id",
+                    headers=HEADERS_SB)
+                leads_to_rescout = resp.json() if resp.status_code == 200 else []
+            if not leads_to_rescout:
+                return "No scouted leads found to re-scout."
+            # Clear their buying signals so the background worker picks them up
+            async with httpx.AsyncClient(timeout=30) as client:
+                for lead in leads_to_rescout:
+                    await client.patch(
+                        f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead['id']}&user_id=eq.{user_id}",
+                        headers=HEADERS_SB,
+                        json={"buying_signals": None, "rank_score": 99.0, "updated_at": datetime.now(timezone.utc).isoformat()})
+            return f"Queued {len(leads_to_rescout)} leads for re-scouting through your Sales Lens. The background worker will process them with your product context. Check the Leads tab in a few minutes to see updated intel."
 
         elif name == "draft_email":
             lead_name = inp.get("lead_name", "")
@@ -1574,13 +1611,14 @@ async def _scout_user(user_id: str, batch_size: int = 5):
     if not leads:
         return 0
     
-    # Fetch ICP once per batch
+    # Fetch ICP and Sales Lens once per batch
     icp = await _get_user_icp(user_id)
+    sales_lens = await _get_user_sales_lens(user_id)
 
     count = 0
     for lead in leads:
         try:
-            signals = await ScoutAgent.scout_lead(lead)
+            signals = await ScoutAgent.scout_lead(lead, sales_lens=sales_lens)
             now = datetime.now(timezone.utc).isoformat()
             async with httpx.AsyncClient(timeout=30) as client:
                 await client.patch(
