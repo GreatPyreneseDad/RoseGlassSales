@@ -88,12 +88,12 @@ async def get_current_user(authorization: str = Header(None)) -> Dict:
     token = authorization.replace("Bearer ", "")
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                f"{SUPABASE_URL}/rest/v1/sessions?token=eq.{token}&select=user_id,expires_at",
-                headers=HEADERS_SB)
+            url = f"{SUPABASE_URL}/rest/v1/sessions?token=eq.{token}&select=user_id,expires_at"
+            resp = await client.get(url, headers=HEADERS_SB)
+            logger.info(f"Auth check: status={resp.status_code}, url={SUPABASE_URL[:30]}, key_len={len(SUPABASE_KEY)}, resp_len={len(resp.text)}")
             if resp.status_code >= 400:
-                logger.error(f"Supabase auth check failed: {resp.status_code} {resp.text[:200]}")
-                raise HTTPException(401, "Auth check failed")
+                logger.error(f"Supabase auth response: {resp.status_code} {resp.text[:300]}")
+                raise HTTPException(401, f"Auth check failed: {resp.status_code}")
             sessions = resp.json()
     except HTTPException:
         raise
