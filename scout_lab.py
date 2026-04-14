@@ -28,9 +28,9 @@ import httpx
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("scout-lab")
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://xrzycmvpqohxxlhnorpt.supabase.co")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://xrzycmvpqohxxlhnorpt.supabase.co").strip()
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip().replace("\n", "").replace("\r", "").replace(" ", "")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip().replace("\n", "").replace("\r", "")
 PORT = int(os.environ.get("PORT", 8001))
 
 HEADERS_SB = {
