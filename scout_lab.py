@@ -626,6 +626,7 @@ async def approve_candidates(req: ApproveRequest, authorization: str = Header(No
             now = datetime.now(timezone.utc).isoformat()
             lead_record = {
                 "user_id": user["user_id"],
+                "source": "scout-lab",
                 "full_name": cand["full_name"],
                 "email": cand.get("email"),
                 "title": cand.get("title"),

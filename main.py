@@ -1858,10 +1858,11 @@ async def save_sales_lens(lens: SalesLens, authorization: str = Header(None)):
 # ─── Lead CRUD ────────────────────────────────────────────
 
 @app.get("/api/leads")
-async def get_leads(tier: Optional[str] = None, limit: int = 500, offset: int = 0, authorization: str = Header(None)):
+async def get_leads(tier: Optional[str] = None, source: Optional[str] = None, limit: int = 500, offset: int = 0, authorization: str = Header(None)):
     user = await get_current_user(authorization)
     url = f"{SUPABASE_URL}/rest/v1/leads?order=rank_score.desc.nullslast&limit={limit}&offset={offset}&user_id=eq.{user['user_id']}"
     if tier: url += f"&qualification_tier=eq.{tier}"
+    if source: url += f"&source=eq.{source}"
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(url, headers=HEADERS_SB)
         resp.raise_for_status()

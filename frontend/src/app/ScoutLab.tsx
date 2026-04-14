@@ -55,6 +55,21 @@ const TC: Record<string, string> = {
 };
 const DC = { psi: '#a78bfa', rho: '#22d3ee', q: '#fbbf24', f: '#34d399' };
 
+// Theme-aware colors
+const T = (theme: string) => ({
+  bg: theme === 'dark' ? '#020617' : '#f8fafc',
+  bgCard: theme === 'dark' ? '#0a0f1a' : '#ffffff',
+  bgInput: theme === 'dark' ? '#0a0f1a' : '#ffffff',
+  bgPanel: theme === 'dark' ? '#0f172a' : '#f1f5f9',
+  border: theme === 'dark' ? '#1e293b' : '#e2e8f0',
+  borderLight: theme === 'dark' ? '#111827' : '#f1f5f9',
+  text: theme === 'dark' ? '#f1f5f9' : '#1e293b',
+  textSecondary: theme === 'dark' ? '#e2e8f0' : '#334155',
+  textMuted: theme === 'dark' ? '#94a3b8' : '#64748b',
+  textDim: theme === 'dark' ? '#64748b' : '#94a3b8',
+  textFaint: theme === 'dark' ? '#475569' : '#cbd5e1',
+});
+
 // ─── Tag Input ───────────────────────────────────────────
 function TagInput({ label, tags, setTags, placeholder }: {
   label: string; tags: string[]; setTags: (t: string[]) => void; placeholder: string;
@@ -201,7 +216,7 @@ function CandidateCard({ cand, onApprove, onReject, busy }: {
 // MAIN SCOUT LAB COMPONENT
 // ═══════════════════════════════════════════════════════════
 
-export default function ScoutLab() {
+export default function ScoutLab({ theme = 'dark' }: { theme?: 'dark' | 'light' }) {
   // Mission builder state
   const [model, setModel] = useState('sonnet');
   const [targetCount, setTargetCount] = useState(10);
