@@ -754,7 +754,7 @@ INT_FIELDS = {"company_size", "company_founded"}
 STR_FIELDS = {"phone_number1","phone_number2","phone_number3","mobile_phone1","other_phone1","company_postal_code"}
 
 @app.post("/api/upload-csv")
-async def upload_csv(file: UploadFile = File(...), authorization: str = Header(None)):
+async def upload_csv(file: UploadFile = File(...), list_name: Optional[str] = None, authorization: str = Header(None)):
     user = await get_current_user(authorization)
     """Upload Wiza leads from CSV, XLSX, or Numbers files."""
     fname = file.filename.lower()
@@ -870,7 +870,7 @@ async def upload_csv(file: UploadFile = File(...), authorization: str = Header(N
     # Create import batch
     async with httpx.AsyncClient(timeout=30) as client:
         batch_resp = await client.post(f"{SUPABASE_URL}/rest/v1/import_batches", headers=HEADERS_SB,
-            json={"filename": file.filename, "row_count": len(rows), "status": "processing", "user_id": user["user_id"]})
+            json={"filename": file.filename, "list_name": list_name or file.filename, "row_count": len(rows), "status": "processing", "user_id": user["user_id"]})
         batch_resp.raise_for_status()
         batch_id = batch_resp.json()[0]["id"]
 
@@ -1869,14 +1869,52 @@ async def save_sales_lens(lens: SalesLens, authorization: str = Header(None)):
             json={"sales_lens": lens.model_dump()})
     return {"saved": True, "lens": lens.model_dump()}
 
+# ─── Lists (Import Batches) ───────────────────────────────
+
+@app.get("/api/lists")
+async def get_lists(authorization: str = Header(None)):
+    """Get all import batches / lead lists for this user."""
+    user = await get_current_user(authorization)
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/import_batches?user_id=eq.{user['user_id']}&order=imported_at.desc&select=id,list_name,filename,row_count,status,color,imported_at",
+            headers=HEADERS_SB)
+        batches = resp.json() if resp.status_code == 200 else []
+    # Also add scout-lab as a virtual list
+    async with httpx.AsyncClient(timeout=15) as client:
+        scout_resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/leads?source=eq.scout-lab&user_id=eq.{user['user_id']}&select=id",
+            headers={**HEADERS_SB, "Prefer": "count=exact", "Range-Unit": "items", "Range": "0-0"})
+        scout_count = int(scout_resp.headers.get("content-range", "0/0").split("/")[-1])
+    if scout_count > 0:
+        batches.insert(0, {"id": "scout-lab", "list_name": "Scout Lab", "filename": None, "row_count": scout_count, "status": "complete", "color": "#a78bfa", "imported_at": None})
+    return batches
+
+@app.patch("/api/lists/{list_id}")
+async def update_list(list_id: str, authorization: str = Header(None), list_name: Optional[str] = None, color: Optional[str] = None):
+    """Rename or recolor a list."""
+    user = await get_current_user(authorization)
+    data = {}
+    if list_name is not None: data["list_name"] = list_name
+    if color is not None: data["color"] = color
+    if not data: raise HTTPException(400, "Nothing to update")
+    async with httpx.AsyncClient(timeout=15) as client:
+        await client.patch(
+            f"{SUPABASE_URL}/rest/v1/import_batches?id=eq.{list_id}&user_id=eq.{user['user_id']}",
+            headers=HEADERS_SB, json=data)
+    return {"updated": True}
+
 # ─── Lead CRUD ────────────────────────────────────────────
 
 @app.get("/api/leads")
-async def get_leads(tier: Optional[str] = None, source: Optional[str] = None, limit: int = 500, offset: int = 0, authorization: str = Header(None)):
+async def get_leads(tier: Optional[str] = None, source: Optional[str] = None, batch_id: Optional[str] = None, group_by: Optional[str] = None, limit: int = 500, offset: int = 0, authorization: str = Header(None)):
     user = await get_current_user(authorization)
-    url = f"{SUPABASE_URL}/rest/v1/leads?order=rank_score.desc.nullslast&limit={limit}&offset={offset}&user_id=eq.{user['user_id']}"
+    order = "company.asc,rank_score.desc.nullslast" if group_by == "company" else "rank_score.desc.nullslast"
+    url = f"{SUPABASE_URL}/rest/v1/leads?order={order}&limit={limit}&offset={offset}&user_id=eq.{user['user_id']}"
     if tier: url += f"&qualification_tier=eq.{tier}"
     if source: url += f"&source=eq.{source}"
+    if batch_id and batch_id != "scout-lab": url += f"&import_batch_id=eq.{batch_id}"
+    elif batch_id == "scout-lab": url += f"&source=eq.scout-lab"
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(url, headers=HEADERS_SB)
         resp.raise_for_status()
