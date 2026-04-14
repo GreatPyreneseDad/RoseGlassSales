@@ -32,6 +32,7 @@ logger = logging.getLogger("rose-glass-sales")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://xrzycmvpqohxxlhnorpt.supabase.co")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+CERATA_LOCAL_URL = os.environ.get("CERATA_LOCAL_URL", "http://localhost:8642")
 PORT = int(os.environ.get("PORT", 8000))
 
 HEADERS_SB = {
@@ -397,12 +398,99 @@ Frame buying signals in terms of how they relate to what the user sells."""
 
 
 # ═══════════════════════════════════════════════════════════
+# LOCAL CERATA SCOUT — Uses local Gemma 4 via CERATA v2 API
+# Zero token cost. Requires localhost:8642 running.
+# ═══════════════════════════════════════════════════════════
+
+class LocalCERATAScout:
+    """Perceive and analyze buying signals through local CERATA v2.
+    No Anthropic tokens. No web search (signal text must be provided).
+    Use for: re-analyzing existing signals, perceiving notes, scoring inbound."""
+
+    @classmethod
+    async def perceive(cls, text: str) -> Dict[str, Any]:
+        """Run Rose Glass perception on text. Returns dimensional signature."""
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(
+                    f"{CERATA_LOCAL_URL}/perceive",
+                    json={"text": text})
+                resp.raise_for_status()
+                return resp.json()
+        except Exception as e:
+            logger.error(f"Local CERATA perceive failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    @classmethod
+    async def analyze_signals(cls, lead: Dict, signal_text: str = "",
+                              sales_lens: Dict = None) -> Dict[str, str]:
+        """Send signal text + lead context to local Gemma 4 for analysis.
+        Returns buying_signals analysis as if a scout wrote it."""
+        name = lead.get("full_name", "")
+        company = lead.get("company", "")
+        title = lead.get("title", "")
+        industry = lead.get("company_industry", "")
+
+        prompt = f"""Analyze these buying signals for a sales lead:
+
+Name: {name}
+Title: {title}
+Company: {company}
+Industry: {industry}
+
+Signal text to analyze:
+{signal_text[:2000]}
+
+Based on these signals, assess: What is this person's buying intent? 
+What authority do they have? How urgent is their need? 
+How well do they fit as a prospect? Be specific and concise."""
+
+        if sales_lens and sales_lens.get("product_name"):
+            prompt += f"\n\nFrame analysis for: {sales_lens.get('product_name', '')} — {sales_lens.get('product_description', '')}"
+
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                resp = await client.post(
+                    f"{CERATA_LOCAL_URL}/chat",
+                    json={
+                        "message": prompt,
+                        "session_id": f"scout-{lead.get('id', 'unknown')}",
+                        "max_tokens": 500,
+                    })
+                resp.raise_for_status()
+                data = resp.json()
+                return {
+                    "buying_signals": data.get("response", ""),
+                    "web_signals": f"Analyzed by local CERATA (Gemma 4) at {datetime.now(timezone.utc).isoformat()}",
+                    "linkedin_summary": "",
+                    "cerata_readings": data.get("readings"),
+                    "cerata_memory_id": data.get("memory_id"),
+                }
+        except Exception as e:
+            logger.error(f"Local CERATA analyze failed for {name}: {e}")
+            return {"buying_signals": f"Local analysis error: {str(e)[:200]}",
+                    "web_signals": "", "linkedin_summary": ""}
+
+    @classmethod
+    async def is_available(cls) -> bool:
+        """Check if local CERATA API is running."""
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.get(f"{CERATA_LOCAL_URL}/health")
+                return resp.status_code == 200
+        except Exception:
+            return False
+
+
+# ═══════════════════════════════════════════════════════════
 # API ROUTES
 # ═══════════════════════════════════════════════════════════
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "rose-glass-sales"}
+    cerata_local = await LocalCERATAScout.is_available()
+    return {"status": "ok", "service": "rose-glass-sales",
+            "cerata_local": cerata_local, "cerata_local_url": CERATA_LOCAL_URL}
 
 
 # ─── Auth ─────────────────────────────────────────────────
@@ -806,6 +894,175 @@ async def upload_csv(file: UploadFile = File(...), authorization: str = Header(N
             json={"status": "complete", "row_count": inserted})
 
     return {"batch_id": batch_id, "filename": file.filename, "rows_parsed": len(rows), "inserted": inserted}
+
+# ─── Buying Signal Notes (Local CERATA) ──────────────────
+
+class NoteRequest(BaseModel):
+    lead_id: str
+    note: str
+    source: Optional[str] = "manual"  # manual, call, email, meeting, linkedin
+
+class PerceiveTextRequest(BaseModel):
+    text: str
+
+@app.post("/api/notes/add")
+async def add_buying_signal_note(req: NoteRequest, authorization: str = Header(None)):
+    """Add a buying signal note to a lead. Perceives through local CERATA,
+    then re-ranks the lead with the new signal data. Zero token cost."""
+    user = await get_current_user(authorization)
+
+    # Get existing lead
+    async with httpx.AsyncClient(timeout=15) as client:
+        lead_resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/leads?id=eq.{req.lead_id}&user_id=eq.{user['user_id']}&select=*",
+            headers=HEADERS_SB)
+        leads = lead_resp.json()
+    if not leads:
+        raise HTTPException(404, "Lead not found")
+    lead = leads[0]
+
+    # Perceive the note through local CERATA
+    perception = await LocalCERATAScout.perceive(req.note)
+
+    # Analyze the note in context of the lead
+    analysis_result = await LocalCERATAScout.analyze_signals(lead, req.note)
+
+    # Append note to existing buying signals
+    existing = lead.get("buying_signals") or ""
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    note_entry = f"\n\n[{req.source.upper()} NOTE — {timestamp}]\n{req.note}"
+    updated_signals = existing + note_entry
+
+    # Re-rank with updated signals
+    icp = await _get_user_icp(user["user_id"])
+    lead_for_rank = {**lead, "buying_signals": updated_signals}
+    ranking = CERATABridge.analyze(
+        buying_signals=updated_signals,
+        web_signals=lead.get("web_signals", ""),
+        linkedin_summary=lead.get("linkedin_summary", ""),
+        title=lead.get("title", ""),
+        company_industry=lead.get("company_industry", ""),
+        company_size=lead.get("company_size") or 0,
+        company_description=lead.get("company_description", ""),
+        icp=icp, lead_data=lead_for_rank)
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Write back
+    async with httpx.AsyncClient(timeout=15) as client:
+        await client.patch(
+            f"{SUPABASE_URL}/rest/v1/leads?id=eq.{req.lead_id}",
+            headers=HEADERS_SB,
+            json={
+                "buying_signals": updated_signals,
+                "buying_signals_updated_at": now,
+                **ranking,
+                "ranked_at": now,
+                "updated_at": now,
+            })
+
+    return {
+        "lead_id": req.lead_id,
+        "note_added": True,
+        "source": req.source,
+        "perception": perception if perception.get("success") else None,
+        "new_tier": ranking["qualification_tier"],
+        "new_coherence": ranking["coherence_score"],
+        "new_rank": ranking["rank_score"],
+        "fractures": ranking["dimensional_fractures"],
+    }
+
+
+@app.post("/api/notes/perceive")
+async def perceive_text(req: PerceiveTextRequest, authorization: str = Header(None)):
+    """Perceive any text through local CERATA Rose Glass.
+    Returns dimensional signature. No lead modification.
+    Use for: testing signal text, previewing note impact, quick analysis."""
+    await get_current_user(authorization)
+
+    perception = await LocalCERATAScout.perceive(req.text)
+    if not perception.get("success"):
+        raise HTTPException(502, f"CERATA local not available: {perception.get('error', 'unknown')}")
+
+    # Also run CERATABridge for CRM-calibrated scoring
+    bridge = CERATABridge.analyze(buying_signals=req.text)
+
+    return {
+        "rose_glass": {
+            "psi": perception.get("psi", 0),
+            "rho": perception.get("rho", 0),
+            "q": perception.get("q", 0),
+            "f": perception.get("f", 0),
+            "cx": perception.get("cx", 0),
+            "veritas": perception.get("veritas", 0),
+            "dark_spot": perception.get("dark_spot", False),
+        },
+        "crm_bridge": bridge,
+        "cerata_local": True,
+    }
+
+
+@app.post("/api/scout/local")
+async def run_local_scout(lead_id: str, signal_text: str = "", authorization: str = Header(None)):
+    """Scout a single lead using local CERATA instead of Anthropic.
+    If signal_text is provided, analyzes that. Otherwise analyzes existing buying_signals.
+    Zero token cost."""
+    user = await get_current_user(authorization)
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead_id}&user_id=eq.{user['user_id']}&select=*",
+            headers=HEADERS_SB)
+        leads = resp.json()
+    if not leads:
+        raise HTTPException(404, "Lead not found")
+    lead = leads[0]
+
+    text = signal_text or lead.get("buying_signals") or ""
+    if not text.strip():
+        raise HTTPException(400, "No signal text to analyze. Provide signal_text or scout the lead first.")
+
+    lens = await _get_user_sales_lens(user["user_id"])
+    result = await LocalCERATAScout.analyze_signals(lead, text, sales_lens=lens)
+
+    # Re-rank
+    icp = await _get_user_icp(user["user_id"])
+    combined = f"{text}\n\n{result.get('buying_signals', '')}"
+    ranking = CERATABridge.analyze(
+        buying_signals=combined,
+        web_signals=lead.get("web_signals", ""),
+        linkedin_summary=lead.get("linkedin_summary", ""),
+        title=lead.get("title", ""),
+        company_industry=lead.get("company_industry", ""),
+        company_size=lead.get("company_size") or 0,
+        company_description=lead.get("company_description", ""),
+        icp=icp, lead_data=lead)
+
+    now = datetime.now(timezone.utc).isoformat()
+    async with httpx.AsyncClient(timeout=15) as client:
+        await client.patch(
+            f"{SUPABASE_URL}/rest/v1/leads?id=eq.{lead_id}",
+            headers=HEADERS_SB,
+            json={
+                "buying_signals": combined,
+                "buying_signals_updated_at": now,
+                "web_signals": result.get("web_signals", ""),
+                **ranking,
+                "ranked_at": now,
+                "updated_at": now,
+            })
+
+    return {
+        "lead_id": lead_id,
+        "analysis": result.get("buying_signals", ""),
+        "cerata_readings": result.get("cerata_readings"),
+        "new_tier": ranking["qualification_tier"],
+        "new_coherence": ranking["coherence_score"],
+        "fractures": ranking["dimensional_fractures"],
+        "model": "gemma-4-26b-local",
+        "tokens_cost": 0,
+    }
+
 
 # ─── Scout ────────────────────────────────────────────────
 
@@ -1250,7 +1507,8 @@ Output the subject line on the first line (no "Subject:" prefix), then a blank l
 @app.post("/api/chat")
 async def chat(req: ChatRequest, authorization: str = Header(None)):
     user = await get_current_user(authorization)
-    # Build context
+
+    # Build context from Supabase
     async with httpx.AsyncClient(timeout=30) as client:
         stats_resp = await client.get(f"{SUPABASE_URL}/rest/v1/leads?select=qualification_tier&limit=1000&user_id=eq.{user['user_id']}", headers=HEADERS_SB)
         all_tiers = {}
@@ -1259,63 +1517,151 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
             all_tiers[t] = all_tiers.get(t, 0) + 1
 
         top_resp = await client.get(
-            f"{SUPABASE_URL}/rest/v1/leads?order=rank_score.desc.nullslast&limit=25&user_id=eq.{user['user_id']}&select=id,full_name,title,company,region,locality,rank_score,coherence_score,qualification_tier,psi_intent,rho_authority,q_optimized,f_fit,dimensional_fractures,buying_signals,user_notes,user_status,email,phone_number1,mobile_phone1,linkedin_profile_url,company_domain",
+            f"{SUPABASE_URL}/rest/v1/leads?order=rank_score.desc.nullslast&limit=15&user_id=eq.{user['user_id']}&select=id,full_name,title,company,region,coherence_score,qualification_tier,psi_intent,rho_authority,q_optimized,f_fit,dimensional_fractures,email,buying_signals",
             headers=HEADERS_SB)
         top_leads = top_resp.json()
 
-    # Trim top leads context to prevent overflow
-    top_leads_slim = [{"full_name": l.get("full_name"), "title": l.get("title"), "company": l.get("company"),
+    top_leads_slim = [{"id": l.get("id"), "full_name": l.get("full_name"), "title": l.get("title"), "company": l.get("company"),
                         "coherence_score": l.get("coherence_score"), "qualification_tier": l.get("qualification_tier"),
                         "email": l.get("email")} for l in top_leads[:15]]
-    context = f"DB: {sum(all_tiers.values())} leads, tiers: {json.dumps(all_tiers)}\nTOP 15:\n{json.dumps(top_leads_slim, indent=1)}"
-    messages = [*req.history[-6:], {"role": "user", "content": f"{context}\n\nUser: {req.message}"}]
 
-    # Fetch sales lens and build system prompt
     sales_lens = await _get_user_sales_lens(user["user_id"])
-    chat_system = _build_chat_system(sales_lens)
+    lens_ctx = ""
+    if sales_lens and sales_lens.get("product_name"):
+        lens_ctx = f"\nYou sell: {sales_lens.get('product_name','')} — {sales_lens.get('product_description','')}"
+        if sales_lens.get("not_this"):
+            lens_ctx += f"\nNever position as: {', '.join(sales_lens['not_this'])}"
 
-    # Agentic loop — keep calling until no more tool_use
-    max_iterations = 5
-    for _ in range(max_iterations):
+    msg_lower = req.message.lower()
+
+    # ── Dispatch: detect intent and route to tools ──
+
+    # 1. SEARCH/SCOUT: user wants web research on a lead
+    search_triggers = ["search", "research", "scout", "look up", "find out about",
+                       "buying signals", "update.*signal", "google", "what do we know about",
+                       "dig into", "investigate", "more data", "better research", "web search"]
+    needs_search = any(t in msg_lower for t in search_triggers)
+
+    # Find which lead the user is asking about
+    target_lead = None
+    if needs_search:
+        for lead in top_leads:
+            name = (lead.get("full_name") or "").lower()
+            company = (lead.get("company") or "").lower()
+            if name:
+                name_parts = name.split()
+                if any(part in msg_lower for part in name_parts if len(part) > 2):
+                    target_lead = lead
+                    break
+            if company and len(company) > 3 and company in msg_lower:
+                target_lead = lead
+                break
+        # Also search Supabase if not in top 15
+        if not target_lead:
+            words = [w for w in req.message.split() if len(w) > 3 and w[0].isupper()]
+            if words:
+                search_name = " ".join(words[:2])
+                async with httpx.AsyncClient(timeout=15) as client:
+                    resp = await client.get(
+                        f"{SUPABASE_URL}/rest/v1/leads?or=(full_name.ilike.%25{search_name}%25,company.ilike.%25{search_name}%25)&user_id=eq.{user['user_id']}&limit=1&select=*",
+                        headers=HEADERS_SB)
+                    found = resp.json()
+                    if found:
+                        target_lead = found[0]
+
+    search_context = ""
+    if needs_search:
+        # Build search queries
+        search_queries = []
+        if target_lead:
+            lead_name = target_lead.get("full_name", "")
+            lead_company = target_lead.get("company", "")
+            lead_title = target_lead.get("title", "")
+            search_queries.append(f"{lead_name} {lead_company} {lead_title} news 2026")
+            if lead_company:
+                search_queries.append(f"{lead_company} funding hiring expansion growth 2025 2026")
+                search_queries.append(f"{lead_company} revenue clients technology")
+        else:
+            # Free-form search — extract terms from user message
+            clean = msg_lower
+            for t in search_triggers:
+                clean = clean.replace(t, "")
+            clean = clean.strip(" .,!?")
+            if clean:
+                search_queries.append(f"{clean} 2026")
+                search_queries.append(f"{clean} news hiring growth")
+
+        for sq in search_queries[:5]:
+            try:
+                async with httpx.AsyncClient(timeout=60) as client:
+                    search_resp = await client.post(f"{CERATA_LOCAL_URL}/search",
+                        json={"query": sq, "max_results": 5})
+                    search_data = search_resp.json()
+                    results = search_data.get("results", [])
+                    if results:
+                        if not search_context:
+                            search_context = "\n\nWEB SEARCH RESULTS (you found this data):\n"
+                        search_context += f"\nSearch: '{sq}':\n"
+                        for r in results:
+                            search_context += f"- {r.get('title','')}: {r.get('body','')[:200]}\n"
+            except Exception as e:
+                logger.warning(f"Search failed for '{sq}': {e}")
+
+    # 2. UPDATE: user wants to write notes or update a lead
+    update_triggers = ["update", "add note", "mark as", "set status", "change tier"]
+    needs_update = any(t in msg_lower for t in update_triggers)
+
+    update_result = ""
+    if needs_update and target_lead:
+        # Write the search results as buying signals if we searched
+        if search_context:
+            now = datetime.now(timezone.utc).isoformat()
+            existing = target_lead.get("buying_signals") or ""
+            new_signals = existing + f"\n\n[CERATA SCOUT — {now}]{search_context}"
+            async with httpx.AsyncClient(timeout=15) as client:
+                await client.patch(
+                    f"{SUPABASE_URL}/rest/v1/leads?id=eq.{target_lead['id']}",
+                    headers=HEADERS_SB,
+                    json={"buying_signals": new_signals, "buying_signals_updated_at": now, "updated_at": now})
+
+            # Re-rank
+            icp = await _get_user_icp(user["user_id"])
+            ranking = CERATABridge.analyze(
+                buying_signals=new_signals, title=target_lead.get("title",""),
+                company_industry=target_lead.get("company_industry",""),
+                company_size=target_lead.get("company_size") or 0,
+                company_description=target_lead.get("company_description",""),
+                icp=icp, lead_data=target_lead)
+            async with httpx.AsyncClient(timeout=15) as client:
+                await client.patch(
+                    f"{SUPABASE_URL}/rest/v1/leads?id=eq.{target_lead['id']}",
+                    headers=HEADERS_SB,
+                    json={**ranking, "ranked_at": now, "updated_at": now})
+            update_result = f"\n\n[Updated {target_lead.get('full_name','')}: new tier={ranking['qualification_tier']}, coherence={ranking['coherence_score']:.3f}]"
+
+    # ── Build final prompt with all gathered context ──
+    context = f"DB: {sum(all_tiers.values())} leads, tiers: {json.dumps(all_tiers)}\nTOP 15:\n{json.dumps(top_leads_slim, indent=1)}"
+
+    full_message = f"""You are the Rose Glass Sales Intelligence Agent. You see leads through dimensional analysis.
+Dimensions: Ψ (intent), ρ (authority), q (urgency), f (fit). Tiers: hot/warm/cold/disqualified.
+Be direct. Use dimensional language when explaining reasoning.
+IMPORTANT: You have web search capability. When the user asks you to research a lead, the system automatically searches the web and includes results below. Present the search findings as YOUR research — you found this data. Never say you cannot search.{lens_ctx}
+
+{context}{search_context}{update_result}
+
+User: {req.message}"""
+
+    # Route through local CERATA
+    try:
         async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post("https://api.anthropic.com/v1/messages",
-                headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
-                json={"model": "claude-sonnet-4-20250514", "max_tokens": 4096, "system": chat_system,
-                      "tools": CHAT_TOOLS, "messages": messages})
+            resp = await client.post(f"{CERATA_LOCAL_URL}/chat",
+                json={"message": full_message, "session_id": f"sales-chat-{user['user_id']}", "max_tokens": 800})
             resp.raise_for_status()
             data = resp.json()
-
-        # Collect response blocks
-        assistant_content = data.get("content", [])
-        messages.append({"role": "assistant", "content": assistant_content})
-
-        # Check if there are tool calls
-        tool_uses = [b for b in assistant_content if b.get("type") == "tool_use"]
-        if not tool_uses:
-            break  # No tools called, we're done
-
-        # Execute tools and add results
-        tool_results = []
-        for tu in tool_uses:
-            result = await _exec_tool(tu["name"], tu["input"], user_id=user["user_id"])
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": tu["id"],
-                "content": result,
-            })
-        messages.append({"role": "user", "content": tool_results})
-
-    # Extract final text
-    reply_parts = []
-    for block in assistant_content:
-        if block.get("type") == "text":
-            reply_parts.append(block["text"])
-    reply = "\n".join(reply_parts) or "Action completed."
-
-    # Save to chat history
-    async with httpx.AsyncClient(timeout=30) as client:
-        await client.post(f"{SUPABASE_URL}/rest/v1/chat_messages", headers=HEADERS_SB,
-            json=[{"role": "user", "content": req.message}, {"role": "assistant", "content": reply}])
+            reply = data.get("response", "No response from CERATA.")
+    except Exception as e:
+        logger.error(f"Local CERATA chat failed: {e}")
+        reply = f"CERATA local is not responding. Make sure it's running on {CERATA_LOCAL_URL}."
 
     return {"reply": reply, "stats": {"total": sum(all_tiers.values()), "tiers": all_tiers}}
 
@@ -1411,50 +1757,40 @@ async def focus_chat(req: FocusChatRequest, authorization: str = Header(None)):
     recent_history = req.history[-6:] if req.history else []
     messages = [*recent_history, {"role": "user", "content": f"{context}\n\nUser: {req.message}"}]
 
-    # Agentic loop with tools
-    max_iterations = 5
-    assistant_content = []
-    for _ in range(max_iterations):
+    # Route through local CERATA
+    lens_ctx = ""
+    if sales_lens and sales_lens.get("product_name"):
+        lens_ctx = f"\nYou sell: {sales_lens.get('product_name','')} — {sales_lens.get('product_description','')}"
+        if sales_lens.get("not_this"):
+            lens_ctx += f"\nNever position as: {', '.join(sales_lens['not_this'])}"
+
+    full_message = f"""You are a sales intelligence agent in CALL MODE — focused on one lead.
+The user is on a live call or preparing. Be concise — they're multitasking.
+Lead with actionable insight. When they share new info, acknowledge and advise.{lens_ctx}
+
+{context}
+
+User: {req.message}"""
+
+    try:
         async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post("https://api.anthropic.com/v1/messages",
-                headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
-                json={"model": "claude-sonnet-4-20250514", "max_tokens": 4096, "system": _build_focus_system(sales_lens),
-                      "tools": CHAT_TOOLS, "messages": messages})
+            resp = await client.post(f"{CERATA_LOCAL_URL}/chat",
+                json={"message": full_message, "session_id": f"focus-{req.lead_id}", "max_tokens": 600})
             resp.raise_for_status()
             data = resp.json()
+            reply = data.get("response", "No response from CERATA.")
+    except Exception as e:
+        logger.error(f"Local CERATA focus chat failed: {e}")
+        reply = f"CERATA local is not responding. Check {CERATA_LOCAL_URL}."
 
-        assistant_content = data.get("content", [])
-        messages.append({"role": "assistant", "content": assistant_content})
-
-        tool_uses = [b for b in assistant_content if b.get("type") == "tool_use"]
-        if not tool_uses:
-            break
-
-        tool_results = []
-        for tu in tool_uses:
-            result = await _exec_tool(tu["name"], tu["input"], user_id=user["user_id"])
-            tool_results.append({"type": "tool_result", "tool_use_id": tu["id"], "content": result})
-        messages.append({"role": "user", "content": tool_results})
-
-    reply = "\n".join(b["text"] for b in assistant_content if b.get("type") == "text") or "Done."
-
-    # Check if any tool calls wrote to the database
-    wrote_to_db = any(
-        b.get("name") in ("update_lead", "scout_lead", "rank_lead", "scout_all")
-        for content_list in messages
-        if isinstance(content_list, dict) and isinstance(content_list.get("content"), list)
-        for b in content_list["content"]
-        if isinstance(b, dict) and b.get("type") == "tool_use"
-    )
-
-    # Get updated lead after any tool calls
+    # Get updated lead
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
             f"{SUPABASE_URL}/rest/v1/leads?id=eq.{req.lead_id}&user_id=eq.{user['user_id']}",
             headers=HEADERS_SB)
         updated_lead = resp.json()[0] if resp.json() else lead
 
-    return {"reply": reply, "lead": updated_lead, "wrote": wrote_to_db}
+    return {"reply": reply, "lead": updated_lead, "wrote": False}
 
 # ─── ICP Profile ──────────────────────────────────────────
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import ScoutLab from './ScoutLab';
 
 // ─── API helpers with auth ───────────────────────────────
 const getToken = () => typeof window !== 'undefined' ? localStorage.getItem('rgs_token') : null;
@@ -348,7 +349,7 @@ function SettingsPanel({user,onClose,onLogout}:{user:any;onClose:()=>void;onLogo
 // ═══════════════════════════════════════════════════════════
 export default function Home(){
   const[authed,setAuthed]=useState(false);const[user,setUser]=useState<any>(null);const[showSettings,setShowSettings]=useState(false);
-  const[view,setView]=useState<'chat'|'leads'>('chat');const[leads,setLeads]=useState<Lead[]>([]);const[stats,setStats]=useState<Stats|null>(null);
+  const[view,setView]=useState<'chat'|'leads'|'scout-lab'>('chat');const[leads,setLeads]=useState<Lead[]>([]);const[stats,setStats]=useState<Stats|null>(null);
   const[focusLead,setFocusLead]=useState<Lead|null>(null);
   const[showICP,setShowICP]=useState(false);
   const[showLens,setShowLens]=useState(false);
@@ -406,7 +407,7 @@ export default function Home(){
       {showSettings&&<SettingsPanel user={user} onClose={()=>setShowSettings(false)} onLogout={handleLogout}/>}
       <header style={{display:'flex',alignItems:'center',padding:'10px 20px',borderBottom:'1px solid #111827',background:'#060a14'}}>
         <div style={{display:'flex',alignItems:'center',gap:10}}><div style={{width:30,height:30,borderRadius:7,background:'linear-gradient(135deg,#7c3aed,#ec4899)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,fontWeight:800,color:'#fff'}}>◈</div><div><div style={{fontSize:14,fontWeight:700,color:'#f1f5f9',letterSpacing:-0.3}}>Rose Glass Sales</div><div style={{fontSize:9,color:'#475569',letterSpacing:1.5,textTransform:'uppercase'}}>CERATA Intelligence</div></div></div>
-        <nav style={{display:'flex',gap:2,marginLeft:28,background:'#0f172a',borderRadius:8,padding:2}}>{(['chat','leads'] as const).map(v=>(<button key={v} onClick={()=>{setView(v);if(v==='leads')fetchLeads(filter);}} style={{padding:'5px 14px',borderRadius:6,border:'none',cursor:'pointer',fontSize:12,fontWeight:500,background:view===v?'#1e293b':'transparent',color:view===v?'#f1f5f9':'#64748b'}}>{v.charAt(0).toUpperCase()+v.slice(1)}</button>))}</nav>
+        <nav style={{display:'flex',gap:2,marginLeft:28,background:'#0f172a',borderRadius:8,padding:2}}>{(['chat','leads','scout-lab'] as const).map(v=>(<button key={v} onClick={()=>{setView(v);if(v==='leads')fetchLeads(filter);}} style={{padding:'5px 14px',borderRadius:6,border:'none',cursor:'pointer',fontSize:12,fontWeight:500,background:view===v?'#1e293b':'transparent',color:view===v?'#f1f5f9':'#64748b'}}>{v==='scout-lab'?'Scout Lab':v.charAt(0).toUpperCase()+v.slice(1)}</button>))}</nav>
         <div style={{marginLeft:'auto',display:'flex',gap:6}}>
           <ActionBtn label={scouting?'Scouting…':'Scout 10'} color="#8b5cf6" disabled={scouting} onClick={scout}/>
           <ActionBtn label={scoutingWarm?'Scouting…':'Scout Warm'} color="#f59e0b" disabled={scoutingWarm} onClick={scoutWarm}/>
@@ -421,6 +422,7 @@ export default function Home(){
       {view==='leads'&&(<div style={{flex:1,overflowY:'auto'}}><div style={{padding:'10px 14px',display:'flex',gap:5,borderBottom:'1px solid #111827',flexWrap:'wrap'}}>{['hot','warm','cold','disqualified'].map(t=>(<button key={t} onClick={()=>{const next=filter===t?null:t;setFilter(next);fetchLeads(next);}} style={{padding:'3px 10px',borderRadius:10,border:`1px solid ${TC[t]}44`,background:filter===t?`${TC[t]}20`:'transparent',color:filter===t?TC[t]:'#64748b',fontSize:10,cursor:'pointer',fontWeight:600,textTransform:'uppercase',letterSpacing:0.5}}>{t}</button>))}</div>{leads.map(l=><LeadCard key={l.id} lead={l} onFocus={enterFocus}/>)}{!leads.length&&<div style={{padding:40,textAlign:'center',color:'#475569',fontSize:13}}>No leads match.</div>}
           {leads.length>0&&leads.length%500===0&&<div style={{padding:16,textAlign:'center'}}><button onClick={()=>fetchLeads(filter,true)} style={{padding:'8px 24px',borderRadius:8,border:'1px solid #7c3aed33',background:'#7c3aed10',color:'#a78bfa',fontSize:12,fontWeight:600,cursor:'pointer'}}>Load More</button></div>}
           {leads.length>0&&<div style={{padding:8,textAlign:'center',color:'#475569',fontSize:11}}>Showing {leads.length} leads</div>}</div>)}
+      {view==='scout-lab'&&(<div style={{flex:1,overflow:'hidden'}}><ScoutLab/></div>)}
     </div>
   );
 }
