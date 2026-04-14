@@ -489,6 +489,18 @@ async def run_mission(mission_id: str, user_id: str, mission_config: dict, model
 
 @app.get("/health")
 async def health():
+    # Test actual Supabase connectivity
+    sb_test = "untested"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{SUPABASE_URL}/rest/v1/sessions?select=user_id&limit=1",
+                headers=HEADERS_SB)
+            sb_test = f"status={resp.status_code}, body_len={len(resp.text)}"
+            if resp.status_code >= 400:
+                sb_test += f", error={resp.text[:200]}"
+    except Exception as e:
+        sb_test = f"error: {str(e)[:200]}"
     return {
         "status": "ok",
         "service": "scout-lab",
@@ -496,6 +508,8 @@ async def health():
         "supabase_configured": bool(SUPABASE_KEY),
         "anthropic_configured": bool(ANTHROPIC_API_KEY),
         "supabase_url": SUPABASE_URL[:40] + "..." if SUPABASE_URL else "NOT SET",
+        "supabase_key_len": len(SUPABASE_KEY),
+        "supabase_test": sb_test,
     }
 
 
