@@ -29,7 +29,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("scout-lab")
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://xrzycmvpqohxxlhnorpt.supabase.co").strip()
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip().replace("\n", "").replace("\r", "").replace(" ", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip().replace("\n", "").replace("\r", "").replace(" ", "").strip('"').strip("'")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip().replace("\n", "").replace("\r", "")
 PORT = int(os.environ.get("PORT", 8001))
 
@@ -509,6 +509,8 @@ async def health():
         "anthropic_configured": bool(ANTHROPIC_API_KEY),
         "supabase_url": SUPABASE_URL[:40] + "..." if SUPABASE_URL else "NOT SET",
         "supabase_key_len": len(SUPABASE_KEY),
+        "supabase_key_start": SUPABASE_KEY[:10] if SUPABASE_KEY else "EMPTY",
+        "supabase_key_end": SUPABASE_KEY[-10:] if SUPABASE_KEY else "EMPTY",
         "supabase_test": sb_test,
     }
 
