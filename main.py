@@ -1593,17 +1593,20 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
 
         for sq in search_queries[:5]:
             try:
+                # Web search via Anthropic API
                 async with httpx.AsyncClient(timeout=60) as client:
-                    search_resp = await client.post(f"{CERATA_LOCAL_URL}/search",
-                        json={"query": sq, "max_results": 5})
-                    search_data = search_resp.json()
-                    results = search_data.get("results", [])
-                    if results:
-                        if not search_context:
-                            search_context = "\n\nWEB SEARCH RESULTS (you found this data):\n"
-                        search_context += f"\nSearch: '{sq}':\n"
-                        for r in results:
-                            search_context += f"- {r.get('title','')}: {r.get('body','')[:200]}\n"
+                    search_resp = await client.post("https://api.anthropic.com/v1/messages",
+                        headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
+                        json={"model": "claude-haiku-4-5-20251001", "max_tokens": 512,
+                              "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 2}],
+                              "messages": [{"role": "user", "content": f"Search for: {sq}. Return only the key facts found."}]})
+                    if search_resp.status_code == 200:
+                        search_data = search_resp.json()
+                        texts = [b["text"] for b in search_data.get("content", []) if b.get("type") == "text"]
+                        if texts:
+                            if not search_context:
+                                search_context = "\n\nWEB SEARCH RESULTS (you found this data):\n"
+                            search_context += f"\nSearch: '{sq}':\n{chr(10).join(texts)[:500]}\n"
             except Exception as e:
                 logger.warning(f"Search failed for '{sq}': {e}")
 
@@ -1651,32 +1654,23 @@ IMPORTANT: You have web search capability. When the user asks you to research a 
 
 User: {req.message}"""
 
-    # Route through local CERATA, fallback to Anthropic API
+    # Route through Anthropic API (production)
     try:
+        sales_lens_for_chat = await _get_user_sales_lens(user["user_id"])
+        system_prompt = _build_chat_system(sales_lens_for_chat)
         async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(f"{CERATA_LOCAL_URL}/chat",
-                json={"message": full_message, "session_id": f"sales-chat-{user['user_id']}", "max_tokens": 800})
+            resp = await client.post("https://api.anthropic.com/v1/messages",
+                headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
+                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 1024, "system": system_prompt,
+                      "tools": CHAT_TOOLS,
+                      "messages": [{"role": "user", "content": full_message}]})
             resp.raise_for_status()
             data = resp.json()
-            reply = data.get("response", "No response from CERATA.")
+            texts = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
+            reply = "\n".join(texts) or "No response generated."
     except Exception as e:
-        logger.warning(f"Local CERATA unavailable ({e}), falling back to Anthropic API")
-        try:
-            sales_lens = await _get_user_sales_lens(user["user_id"])
-            system_prompt = _build_chat_system(sales_lens)
-            async with httpx.AsyncClient(timeout=120) as client:
-                resp = await client.post("https://api.anthropic.com/v1/messages",
-                    headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
-                    json={"model": "claude-haiku-4-5-20251001", "max_tokens": 1024, "system": system_prompt,
-                          "tools": CHAT_TOOLS,
-                          "messages": [{"role": "user", "content": full_message}]})
-                resp.raise_for_status()
-                data = resp.json()
-                texts = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
-                reply = "\n".join(texts) or "No response generated."
-        except Exception as e2:
-            logger.error(f"Anthropic fallback also failed: {e2}")
-            reply = f"Both CERATA local and Anthropic API failed. Error: {str(e2)[:200]}"
+        logger.error(f"Anthropic API chat failed: {e}")
+        reply = f"Chat error: {str(e)[:200]}"
 
     return {"reply": reply, "stats": {"total": sum(all_tiers.values()), "tiers": all_tiers}}
 
@@ -1788,29 +1782,20 @@ Lead with actionable insight. When they share new info, acknowledge and advise.{
 User: {req.message}"""
 
     try:
+        system_prompt = _build_focus_system(sales_lens)
         async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(f"{CERATA_LOCAL_URL}/chat",
-                json={"message": full_message, "session_id": f"focus-{req.lead_id}", "max_tokens": 600})
+            resp = await client.post("https://api.anthropic.com/v1/messages",
+                headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
+                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 800, "system": system_prompt,
+                      "tools": CHAT_TOOLS,
+                      "messages": [{"role": "user", "content": full_message}]})
             resp.raise_for_status()
             data = resp.json()
-            reply = data.get("response", "No response from CERATA.")
+            texts = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
+            reply = "\n".join(texts) or "No response generated."
     except Exception as e:
-        logger.warning(f"Local CERATA unavailable for focus chat ({e}), falling back to Anthropic API")
-        try:
-            system_prompt = _build_focus_system(sales_lens)
-            async with httpx.AsyncClient(timeout=120) as client:
-                resp = await client.post("https://api.anthropic.com/v1/messages",
-                    headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
-                    json={"model": "claude-haiku-4-5-20251001", "max_tokens": 800, "system": system_prompt,
-                          "tools": CHAT_TOOLS,
-                          "messages": [{"role": "user", "content": full_message}]})
-                resp.raise_for_status()
-                data = resp.json()
-                texts = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
-                reply = "\n".join(texts) or "No response generated."
-        except Exception as e2:
-            logger.error(f"Anthropic fallback also failed for focus: {e2}")
-            reply = f"Both CERATA local and Anthropic API failed. Error: {str(e2)[:200]}"
+        logger.error(f"Anthropic API focus chat failed: {e}")
+        reply = f"Chat error: {str(e)[:200]}"
 
     # Get updated lead
     async with httpx.AsyncClient(timeout=30) as client:
