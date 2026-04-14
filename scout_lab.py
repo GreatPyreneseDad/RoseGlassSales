@@ -82,12 +82,24 @@ MODELS = {
 async def get_current_user(authorization: str = Header(None)) -> Dict:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Not authenticated")
+    if not SUPABASE_KEY:
+        logger.error("SUPABASE_SERVICE_ROLE_KEY is not set!")
+        raise HTTPException(500, "Server misconfigured: missing Supabase key")
     token = authorization.replace("Bearer ", "")
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(
-            f"{SUPABASE_URL}/rest/v1/sessions?token=eq.{token}&select=user_id,expires_at",
-            headers=HEADERS_SB)
-        sessions = resp.json()
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                f"{SUPABASE_URL}/rest/v1/sessions?token=eq.{token}&select=user_id,expires_at",
+                headers=HEADERS_SB)
+            if resp.status_code >= 400:
+                logger.error(f"Supabase auth check failed: {resp.status_code} {resp.text[:200]}")
+                raise HTTPException(401, "Auth check failed")
+            sessions = resp.json()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Auth error: {e}")
+        raise HTTPException(500, f"Auth service error: {str(e)[:200]}")
     if not sessions:
         raise HTTPException(401, "Invalid session")
     session = sessions[0]
@@ -477,7 +489,14 @@ async def run_mission(mission_id: str, user_id: str, mission_config: dict, model
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "scout-lab", "models": list(MODELS.keys())}
+    return {
+        "status": "ok",
+        "service": "scout-lab",
+        "models": list(MODELS.keys()),
+        "supabase_configured": bool(SUPABASE_KEY),
+        "anthropic_configured": bool(ANTHROPIC_API_KEY),
+        "supabase_url": SUPABASE_URL[:40] + "..." if SUPABASE_URL else "NOT SET",
+    }
 
 
 @app.get("/api/scout-lab/models")
