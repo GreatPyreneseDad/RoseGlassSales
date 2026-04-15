@@ -61,13 +61,13 @@ MODELS = {
         "cost": "~$0.003/lead",
     },
     "sonnet": {
-        "id": "claude-sonnet-4-6-20260313",
+        "id": "claude-sonnet-4-6",
         "name": "Sonnet 4.6",
         "desc": "Balanced — finds hidden signals",
         "cost": "~$0.015/lead",
     },
     "opus": {
-        "id": "claude-opus-4-6-20260313",
+        "id": "claude-opus-4-6",
         "name": "Opus 4.6",
         "desc": "Maximum intelligence — finds what others miss",
         "cost": "~$0.075/lead",
