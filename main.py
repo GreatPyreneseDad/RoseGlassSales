@@ -1661,7 +1661,7 @@ User: {req.message}"""
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post("https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
-                json={"model": "claude-opus-4-6-20260313", "max_tokens": 1024, "system": system_prompt,
+                json={"model": "claude-sonnet-4-6-20260313", "max_tokens": 1024, "system": system_prompt,
                       "tools": CHAT_TOOLS,
                       "messages": [{"role": "user", "content": full_message}]})
             resp.raise_for_status()
@@ -1786,7 +1786,7 @@ User: {req.message}"""
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post("https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
-                json={"model": "claude-opus-4-6-20260313", "max_tokens": 800, "system": system_prompt,
+                json={"model": "claude-sonnet-4-6-20260313", "max_tokens": 800, "system": system_prompt,
                       "tools": CHAT_TOOLS,
                       "messages": [{"role": "user", "content": full_message}]})
             resp.raise_for_status()
